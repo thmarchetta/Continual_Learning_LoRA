@@ -101,6 +101,30 @@ def initialize_dictionary(args):
 
             log[f"overlap_t1_full_{i}{j}"] = []
             log[f"overlap_t2_full_{i}{j}"] = []
+    
+    #Order parameters
+    for i in range(1, args.K + 1):
+        log[f'ha_{i}'] = []
+        log[f'hb_{i}'] = []
+        for j in range(1, args.M + 1):
+            log[f'R_{i}{j}'] = []
+            log[f'U_{i}{j}'] = []
+        for j in range(1, args.K + 1):
+            log[f'Q_{i}{j}'] = []
+        for j in range(1, args.L + 1):
+            log[f'G_{i}{j}'] = []
+    for i in range(1, args.L + 1):
+        for j in range(1, args.L + 1):
+            log[f'Phi_{i}{j}'] = []
+    for i in range(1, args.M + 1):
+        for j in range(1, args.L + 1):
+            log[f'Gamma_{i}{j}'] = []
+            log[f'Lambda_{i}{j}'] = []
+    for i in range(1, args.K + 1):
+        for j in range(1, args.L + 1):
+            log[f'D_{i}{j}'] = []
+        for j in range(1, args.K + 1):
+            log[f'Q_{i}{j}'] = []
 
     return log
 
@@ -125,6 +149,7 @@ def initialize_ODE_dictionnary(args):
     for i in range (1, args.K+1):
         for j in range (1,args.L+1):
             logs_ODES[f"G_{i}{j}"] = []
+            logs_ODES[f'D_{i}{j}'] = []
     for i in range (1, args.L+1):
         for j in range (1,args.L+1):
             logs_ODES[f"Phi_{i}{j}"] = []
@@ -132,6 +157,7 @@ def initialize_ODE_dictionnary(args):
         for j in range (1, args.L+1):
             logs_ODES[f"Gamma_{i}{j}"] = []
             logs_ODES[f"Lambda_{i}{j}"] = []
+
     return logs_ODES
 
 def save_ODES_in_dictionnary(logs_ODES, args,task=1,
@@ -155,6 +181,7 @@ def save_ODES_in_dictionnary(logs_ODES, args,task=1,
         for i in range (1,args.K+1):
             for j in range (1,args.L+1):
                 logs_ODES[f"G_{i}{j}"].append(0)
+                logs_ODES[f'D_{i}{j}'].append(0)
         for i in range(1, args.K+1):
             logs_ODES[f"hb_{i}"].append(0)
         for i in range (1, args.L+1):
@@ -182,6 +209,7 @@ def save_ODES_in_dictionnary(logs_ODES, args,task=1,
         for i in range (1,args.K+1):
             for j in range (1,args.L+1):
                 logs_ODES[f"G_{i}{j}"].append(G[i-1, j-1].item())
+                logs_ODES[f'D_{i}{j}'].append(D[i-1, j-1].item())
         for i in range(1, args.K+1):
             logs_ODES[f"hb_{i}"].append(Hb[i-1].item())
         for i in range (1, args.L+1):
@@ -225,5 +253,62 @@ def save_overlaps_in_dictionnary(logs, args, overlap_t1, overlap_t2, task=1,
             logs[f'overlap_t2_full_{i}{j}'].append(overlap_t2_full[i-1,j-1].item())
         
     else :
+        raise ValueError("task must be either 1 or 2")
+    return logs
+
+def save_order_parameters_in_dictionnary(logs, args, task=1, 
+                                         Q=None, R=None, U=None, Ha=None,
+                                         D=None, Hb=None, G=None, Phi=None, Gamma=None, Lambda=None):
+    if task ==1 :
+        #Ops for first half of training
+        for i in range(1,args.K+1):
+            logs[f'ha_{i}'].append(Ha[i-1].item())
+            for j in range(1,args.M+1):
+                logs[f'R_{i}{j}'].append(R[i-1, j-1].item())
+                logs[f'U_{i}{j}'].append(U[i-1, j-1].item())
+        for i in range(1,args.K+1):
+            for j in range(1,args.K+1):
+                logs[f'Q_{i}{j}'].append(Q[i-1, j-1].item())
+                
+        #OPs for second half of training
+        for i in range(1,args.K+1):
+            logs[f'hb_{i}'].append(0)
+            for j in range(1,args.L+1):
+                logs[f'G_{i}{j}'].append(0)
+                logs[f'D_{i}{j}'].append(0)
+        for i in range(1, args.L+1):
+            for j in range(1,args.L+1):
+                logs[f'Phi_{i}{j}'].append(0)
+        for i in range(1, args.M+1):
+            for j in range(1, args.L+1):
+                logs[f'Gamma_{i}{j}'].append(0)
+                logs[f'Lambda_{i}{j}'].append(0)
+        
+    elif task ==2 :
+                #Ops for first half of training
+        for i in range(1,args.K+1):
+            logs[f'ha_{i}'].append(0)
+            for j in range(1,args.M+1):
+                logs[f'R_{i}{j}'].append(0)
+                logs[f'U_{i}{j}'].append(0)
+        for i in range(1,args.K+1):
+            for j in range(1,args.K+1):
+                logs[f'Q_{i}{j}'].append(0)
+                
+        #OPs for second half of training
+        for i in range(1,args.K+1):
+            logs[f'hb_{i}'].append(Hb[i-1].item())
+            for j in range(1,args.L+1):
+                logs[f'G_{i}{j}'].append(G[i-1, j-1].item())
+                logs[f'D_{i}{j}'].append(D[i-1, j-1].item())
+        for i in range(1, args.L+1):
+            for j in range(1,args.L+1):
+                logs[f'Phi_{i}{j}'].append(Phi[i-1, j-1].item())
+        for i in range(1, args.M+1):
+            for j in range(1, args.L+1):
+                logs[f'Gamma_{i}{j}'].append(Gamma[i-1, j-1].item())
+                logs[f'Lambda_{i}{j}'].append(Lambda[i-1, j-1].item())
+        
+    else : 
         raise ValueError("task must be either 1 or 2")
     return logs

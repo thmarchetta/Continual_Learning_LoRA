@@ -64,14 +64,24 @@ def training(args, data, stud):
     
         #Saving metrics before training
     test = data.test_error(stud, loss, args.P_test, LoRA=False)
+    W_curr = stud.fc1.weight.detach().numpy().copy()
+    Ha_curr = stud.head_1.weight.detach().numpy().flatten().copy()
 
+    #overlaps for initialization
     Rcos_t1 = (stud.fc1.weight @ t1.fc1.weight.data.T) / args.N
     Rcos_t2 = (stud.fc1.weight @ t2.fc1.weight.data.T) / args.N
     Qcos = torch.sqrt(torch.diag(stud.fc1.weight @ stud.fc1.weight.T / args.N))
     overlap_t1 = (Rcos_t1.T / Qcos).T /Tcos_t1
     overlap_t2 = (Rcos_t2.T / Qcos).T /Tcos_t2
     
+    #Order parameters for initialization
+    Q=((W_curr @ W_curr.T)/args.N).copy() 
+    R=((W_curr @ B_a.T )/args.N).copy() 
+    U=((W_curr @ B_b.T )/args.N).copy() 
+    Ha=Ha_curr.copy()
+    
     logs = utils.save_overlaps_in_dictionnary(logs, args, overlap_t1, overlap_t2, task=1)
+    logs = utils.save_order_parameters_in_dictionnary(logs, args, Q=Q, R=R, U=U, Ha=Ha, task=1)
     logs["steps"].append(0)
     logs["test_loss1"].append(test[0])
     logs["test_loss2"].append(test[1])
@@ -99,13 +109,24 @@ def training(args, data, stud):
       if _ % 500 == 0: #Saving procedure
         
         test = data.test_error(stud, loss, args.P_test, LoRA=False)
+        W_curr = stud.fc1.weight.detach().numpy().copy()
+        Ha_curr = stud.head_1.weight.detach().numpy().flatten().copy()
+        
+        #Overlaps
         Rcos_t1 = (stud.fc1.weight @ t1_first_layer.T) / args.N
         Rcos_t2 = (stud.fc1.weight @ t2_first_layer.T) / args.N
         Qcos = torch.sqrt(torch.diag(stud.fc1.weight @ stud.fc1.weight.T / args.N))
         overlap_t1 = (Rcos_t1.T / Qcos).T /Tcos_t1
         overlap_t2 = (Rcos_t2.T / Qcos).T /Tcos_t2
         
+        #Order parameters
+        Q=((W_curr @ W_curr.T)/args.N).copy() 
+        R=((W_curr @ B_a.T )/args.N).copy() 
+        U=((W_curr @ B_b.T )/args.N).copy() 
+        Ha=Ha_curr.copy()
+        
         logs = utils.save_overlaps_in_dictionnary(logs, args, overlap_t1, overlap_t2, task=1)
+        logs = utils.save_order_parameters_in_dictionnary(logs, args, Q=Q, R=R, U=U, Ha=Ha, task=1)
         logs["steps"].append(_)
         logs["test_loss1"].append(test[0])
         logs["test_loss2"].append(test[1])
@@ -144,6 +165,7 @@ def training(args, data, stud):
     "D0_switch" : stud.B.weight.detach().numpy().copy()
     })
     test_1_switch = test[0] #Used to compute forgetting
+    
     # SECOND PHASE OF TRAINING:
     for _ in range(1,P+1):
       x, y1, y2 = data.get_data()
@@ -161,14 +183,15 @@ def training(args, data, stud):
       if _ % 500 == 0:
         
         test = data.test_error(stud, loss, args.P_test, LoRA=args.LoRA)
-        #Computation of the overlaps for Ws
+        
+        #Overlaps for Ws
         Rcos_t1 = (stud.fc1.weight @ t1_first_layer.T) / args.N
         Rcos_t2 = (stud.fc1.weight @ t2_first_layer.T) / args.N
         Norm_student = torch.sqrt(torch.diag(stud.fc1.weight @ stud.fc1.weight.T / args.N))
         overlap_t1 = (Rcos_t1.T / Norm_student).T /Tcos_t1
         overlap_t2 = (Rcos_t2.T / Norm_student).T /Tcos_t2
         
-        #Computation of the overlaps for LoRA
+        #Overlaps for LoRA
         delta_W = (stud.B.weight @ stud.A.weight) / sqrt(args.L) #Normalization due to the forward pass
         Rcos_t1_LoRA = (delta_W @ t1_first_layer.T) / args.N
         Rcos_t2_LoRA = (delta_W @ t2_first_layer.T) / args.N
@@ -176,6 +199,7 @@ def training(args, data, stud):
         overlap_t1_LoRA = (Rcos_t1_LoRA.T / Norm_LoRA).T /Tcos_t1
         overlap_t2_LoRA = (Rcos_t2_LoRA.T / Norm_LoRA).T /Tcos_t2
         
+        #Overlaps for wt
         Rcos_t1_wt = (stud.wt.weight @ t1_first_layer.T) / args.N
         Rcos_t2_wt = (stud.wt.weight @ t2_first_layer.T) / args.N
         Norm_wt = torch.sqrt(torch.diag(stud.wt.weight @ stud.wt.weight.T / args.N))
@@ -197,15 +221,30 @@ def training(args, data, stud):
         overlap_t1_full = (Rcos_t1_full.T / Norm_full).T /Tcos_t1
         overlap_t2_full = (Rcos_t2_full.T / Norm_full).T /Tcos_t2
                 
+        #Order parameters 
+        W0 = stud.fc1.weight.detach().numpy().copy()
+        A_curr = stud.A.weight.detach().numpy().copy()
+        B_curr = stud.B.weight.detach().numpy().copy()
+        Hb_curr = stud.head_2.weight.detach().numpy().flatten().copy()
+
+        D=B_curr
+        Hb=Hb_curr
+        G=((W0 @ A_curr.T)/args.N)
+        Phi=((A_curr @ A_curr.T)/args.N)
+        Gamma=(( B_b @ A_curr.T)/args.N)
+        Lambda=(( B_a @ A_curr.T)/args.N)
+        
+        logs = utils.save_overlaps_in_dictionnary(logs, args, overlap_t1, overlap_t2, task=2, 
+                         overlap_t1_LoRA=overlap_t1_LoRA, overlap_t2_LoRA=overlap_t2_LoRA,
+                         overlap_t1_wt=overlap_t1_wt, overlap_t2_wt=overlap_t2_wt, 
+                         overlap_t1_full=overlap_t1_full, overlap_t2_full=overlap_t2_full,
+                         Norm_LoRA=Norm_LoRA)
+        logs = utils.save_order_parameters_in_dictionnary(logs, args, task=2,
+                            D=D, Hb=Hb, G=G, Phi=Phi, Gamma=Gamma, Lambda=Lambda)
         logs["steps"].append(P +_)
         logs["test_loss1"].append(test[0])
         logs["test_loss2"].append(test[1])
         logs["forgetting"].append(test[0] - test_1_switch)
-        logs = utils.save_overlaps_in_dictionnary(logs, args, overlap_t1, overlap_t2, task=2, 
-                                 overlap_t1_LoRA=overlap_t1_LoRA, overlap_t2_LoRA=overlap_t2_LoRA,
-                                 overlap_t1_wt=overlap_t1_wt, overlap_t2_wt=overlap_t2_wt, 
-                                 overlap_t1_full=overlap_t1_full, overlap_t2_full=overlap_t2_full,
-                                 Norm_LoRA=Norm_LoRA)
         
     test = data.test_error(stud, loss, args.P_test, LoRA=args.LoRA)
 
@@ -228,4 +267,9 @@ def training(args, data, stud):
     else:
       logs['method'] = ['standard'] * len(logs["steps"])
 
+    for key, value in logs.items():
+      try:
+          print(f"{key}: length = {len(value)}")
+      except TypeError:
+        print(f"{key}: no length")
     return logs, OP_init

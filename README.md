@@ -7,8 +7,10 @@ utils contains helper functions such as import of the json, or saving of the ord
 
 
 TODO
+0) Fix my OPs during training : compute and save them.
+1) Implement forgetting and transfer plots.
+2) Implement plots of OPs, for LGS and LoRA.
+3) Fix the initialization of the OPs in the ODES. Right now, we must still run training.
+4) Once last step is done, add two helpers in json to choose if we want to compute theory/sim
 
-1) Fix the initialization of the OPs in the ODES. Right now, we must still run training.
-2) Once last step is done, add two helpers in json to choose if we want to compute theory/sim
-3) Implement forgetting and transfer plots
 
