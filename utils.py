@@ -71,6 +71,7 @@ def initialize_dictionary(args):
     log["test_loss1"] = []
     log["test_loss2"] = []
     log["forgetting"] = []
+    log["transfer"] = []
 
     # fixed metadata (optional but cleaner here than later)
     log["N"] = []
@@ -133,6 +134,8 @@ def initialize_ODE_dictionnary(args):
     logs_ODES["test_loss1"] = []
     logs_ODES["test_loss2"] = []
     logs_ODES["steps"] = []
+    logs_ODES["forgetting"] = []
+    logs_ODES["transfer"] = []
     for i in range (1, args.K+1):
         logs_ODES[f"ha_{i}"] = []
         logs_ODES[f"hb_{i}"] = []

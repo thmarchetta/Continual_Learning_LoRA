@@ -43,8 +43,12 @@ def solve_ODES(args, OP_init, gamma):
       Ha = Ha + args.integration_step * update_Ha(C,Ha,args.alpha_H,v_a,args.K,args.M)
       
       logs_ODES["steps"].append(step)
+      logs_ODES["forgetting"].append(0)
+      logs_ODES["transfer"].append(0)
       logs_ODES = utils.save_ODES_in_dictionnary(logs_ODES, args,task=1, Ha=Ha, R=R, Q=Q, U=U)
 
+    test_1_switch = logs_ODES["test_loss1"][-1] #Used to compute forgetting
+    test_2_switch = logs_ODES["test_loss2"][-1]
     #Parameters for second half of training 
     Gamma = OP_init["Gam0"].copy()
     Phi = OP_init["Phi0"].copy()
@@ -96,6 +100,8 @@ def solve_ODES(args, OP_init, gamma):
           D = D + args.integration_step * update_D(C,Hb,args.alpha_b,v_b,args.K,args.M,args.L,gamma)
 
       logs_ODES["steps"].append(num_steps + step)
+      logs_ODES["forgetting"].append(lossA - test_1_switch)
+      logs_ODES["transfer"].append(test_2_switch - lossB)
       logs_ODES = utils.save_ODES_in_dictionnary(logs_ODES, args,task=2,
                              G= G, D=D,
                              Phi=Phi, Gamma=Gamma, Lambda=Lambda, Hb=Hb)

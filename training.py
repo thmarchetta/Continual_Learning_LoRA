@@ -86,6 +86,7 @@ def training(args, data, stud):
     logs["test_loss1"].append(test[0])
     logs["test_loss2"].append(test[1])
     logs["forgetting"].append(0)
+    logs["transfer"].append(0)
 
 
 
@@ -131,6 +132,7 @@ def training(args, data, stud):
         logs["test_loss1"].append(test[0])
         logs["test_loss2"].append(test[1])
         logs["forgetting"].append(0)
+        logs["transfer"].append(0)
 
 
     test = data.test_error(stud, loss, args.P_test, LoRA=False)
@@ -165,6 +167,7 @@ def training(args, data, stud):
     "D0_switch" : stud.B.weight.detach().numpy().copy()
     })
     test_1_switch = test[0] #Used to compute forgetting
+    test_2_switch = test[1] #Used to compute transfer
     
     # SECOND PHASE OF TRAINING:
     for _ in range(1,P+1):
@@ -245,6 +248,7 @@ def training(args, data, stud):
         logs["test_loss1"].append(test[0])
         logs["test_loss2"].append(test[1])
         logs["forgetting"].append(test[0] - test_1_switch)
+        logs["transfer"].append(test_2_switch - test[1])
         
     test = data.test_error(stud, loss, args.P_test, LoRA=args.LoRA)
 
@@ -267,9 +271,4 @@ def training(args, data, stud):
     else:
       logs['method'] = ['standard'] * len(logs["steps"])
 
-    for key, value in logs.items():
-      try:
-          print(f"{key}: length = {len(value)}")
-      except TypeError:
-        print(f"{key}: no length")
     return logs, OP_init
