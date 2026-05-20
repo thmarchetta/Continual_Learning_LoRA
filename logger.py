@@ -59,3 +59,26 @@ class ExperimentLogger:
 
         data = np.load(path, allow_pickle=True).item()
         return data.get("runs", [])
+    
+    @staticmethod   
+    def delete_runs(path, predicate):   
+        
+        if not os.path.exists(path):    
+            print("File does not exist.")   
+            return  
+        
+        data = np.load(path, allow_pickle=True).item()  
+        runs = data.get("runs", []) 
+        
+        initial_len = len(runs) 
+        
+        filtered_runs = [   
+            r for r in runs 
+            if not predicate(r["metadata"]) 
+        ]   
+        
+        deleted = initial_len - len(filtered_runs)  
+        
+        np.save(path, {"runs": filtered_runs}, allow_pickle=True)   
+        
+        print(f"Deleted {deleted} runs.")   

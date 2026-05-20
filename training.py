@@ -246,7 +246,7 @@ def training(args, data, t1, t2, stud, logs_training):
     print('End of Task 2 ----------------------')
     print('Test Loss on Task 1:', test[0])
     print('Test Loss on Task 2:', test[1], '\n')
-    
+
     ExperimentLogger.append_to_file(
     f"results/run_K={args.K}_M={args.M}.npy",
     logs_training
