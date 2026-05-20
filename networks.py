@@ -77,29 +77,20 @@ class Data_and_Teachers():
         self.device = args.device
 
     def get_Teachers(self):
-        #self.target_data = self.dist.sample((1,self.input_size))
 
-        # take random initialised teacher
         self.wt1 = self.teacher_1.fc1.weight.data
-
-
-        # take a orthogonal vector
         r = torch.randn_like(self.wt1)
-
-        # Combine w1 and r with overlap rho
         wt2 = self.rho * self.wt1 + torch.sqrt(1 - torch.tensor([self.rho])**2) * r
 
-        # obtain w2 and update the weights
+
         self.teacher_2.fc1.weight.data = wt2
 
-        # set the output layer to +1, -1
         self.teacher_1.fc2.weight.data = 1 + 0.01*torch.randn((self.M,))
         self.teacher_2.fc2.weight.data = -1 + 0.01*torch.randn((self.M,))
 
         return self.teacher_1, self.teacher_2
 
     def get_data(self):
-        #self.datum = self.dist.sample((1,)).to(device)
         self.datum = torch.randn((1, self.N)).to(self.device) # sample x
 
         self.yt1 = self.teacher_1(self.datum).detach() # obtain y from teacher 1

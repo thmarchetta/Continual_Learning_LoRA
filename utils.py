@@ -32,28 +32,6 @@ def loadJson(path_to_json):
         argsDict = json.load(f)
     return args(argsDict)
 
-def save_to_file(df, args, ODES=False):
-
-    if os.path.isdir(args.path_to_res_folder) == False: # create the results folder if not there
-        try:
-            os.makedirs(args.path_to_res_folder)
-        except OSError:
-            print ("\n!!! ERROR: Creation of the directory %s failed" % args.path_to_res_folder)
-            raise
-    
-    df = pd.DataFrame.from_dict(df)
-    if ODES :
-        print("Saving ODEs results...")
-        filename = f"/sim_K={args.K}_M={args.M}_ODES.csv"
-    else :
-        print("Saving training results...")
-        filename = f"/sim_K={args.K}_M={args.M}.csv"
-    if os.path.isfile(args.path_to_res_folder + filename) == False:
-        with open(args.path_to_res_folder + filename, mode='w') as f:
-            wr = csv.writer(f, dialect='excel')
-            wr.writerow(df.keys().to_list())
-    df.to_csv(args.path_to_res_folder + filename, mode = 'a', index = False, header = None)
-    return
 
 def set_seed(seed=42):
     np.random.seed(seed)             
@@ -62,256 +40,52 @@ def set_seed(seed=42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+def get_OP_init(stud,data,args):
+    # Order parameters after initialization of the network
+    W0 = stud.fc1.weight.detach().numpy().copy()
+    A0 = stud.A.weight.detach().numpy().copy()
+    #D0 = stud.B.weight.detach().numpy().copy()
+    B_a = data.teacher_1.fc1.weight.detach().numpy().copy()
+    B_b = data.teacher_2.fc1.weight.detach().numpy().copy()
+
+
+    OP_init = {
+    "Q0": ((W0 @ W0.T) / args.N).copy(),
+    "R0": ((W0 @ B_a.T) / args.N).copy(),
+    "T0": ((B_a @ B_a.T) / args.N).copy(),
+    "U0": ((W0 @ B_b.T) / args.N).copy(),
+    "S0": ((B_b @ B_b.T) / args.N).copy(),
+    "V0": ((B_a @ B_b.T) / args.N).copy(),
+    "G0": ((W0 @ A0.T) / args.N).copy(),
+    "Lam0": ((B_a @ A0.T) / args.N).copy(),
+    "Gam0": ((B_b @ A0.T) / args.N).copy(),
+    "Phi0": ((A0 @ A0.T) / args.N).copy(),
+    "Ha0": stud.head_1.weight.detach().numpy().reshape((args.K,)).copy(),
+    "Hb0": stud.head_2.weight.detach().numpy().reshape((args.K,)).copy(),
+    "v_a": data.teacher_1.fc2.weight.detach().numpy().copy(),
+    "v_b": data.teacher_2.fc2.weight.detach().numpy().copy(),
+    "D0" : stud.B.weight.detach().numpy().copy()
+    }
+    return OP_init
+
+def get_metadata(args):
+    metadata = {
+        "N": args.N,
+        "M": args.M,
+        "K": args.K,
+        "rho": args.rho,
+        "alpha": args.alpha,
+        "beta": args.beta,
+        "L": args.L,
+        "A_only": args.A_only,
+    }
     
-def initialize_dictionary(args):
-    log = {}
-
-    # scalar histories
-    log["steps"] = []
-    log["test_loss1"] = []
-    log["test_loss2"] = []
-    log["forgetting"] = []
-    log["transfer"] = []
-
-    # fixed metadata (optional but cleaner here than later)
-    log["N"] = []
-    log["M"] = []
-    log["K"] = []
-    log["L"] = []
-    log["rho"] = []
-    log["alpha"] = []
-    log["beta"] = []
-    log["method"] = []
-
-    # LoRA norm
-    for i in range(1, args.K + 1):
-        log[f"norm_LoRA_{i}{i}"] = []
-
-    # overlaps
-    for i in range(1, args.K + 1):
-        for j in range(1, args.M + 1):
-
-            log[f"overlap_t1_{i}{j}"] = []
-            log[f"overlap_t2_{i}{j}"] = []
-
-            log[f"overlap_t1_LoRA_{i}{j}"] = []
-            log[f"overlap_t2_LoRA_{i}{j}"] = []
-
-            log[f"overlap_t1_wt_{i}{j}"] = []
-            log[f"overlap_t2_wt_{i}{j}"] = []
-
-            log[f"overlap_t1_full_{i}{j}"] = []
-            log[f"overlap_t2_full_{i}{j}"] = []
-    
-    #Order parameters
-    for i in range(1, args.K + 1):
-        log[f'ha_{i}'] = []
-        log[f'hb_{i}'] = []
-        for j in range(1, args.M + 1):
-            log[f'R_{i}{j}'] = []
-            log[f'U_{i}{j}'] = []
-        for j in range(1, args.K + 1):
-            log[f'Q_{i}{j}'] = []
-        for j in range(1, args.L + 1):
-            log[f'G_{i}{j}'] = []
-    for i in range(1, args.L + 1):
-        for j in range(1, args.L + 1):
-            log[f'Phi_{i}{j}'] = []
-    for i in range(1, args.M + 1):
-        for j in range(1, args.L + 1):
-            log[f'Gamma_{i}{j}'] = []
-            log[f'Lambda_{i}{j}'] = []
-    for i in range(1, args.K + 1):
-        for j in range(1, args.L + 1):
-            log[f'D_{i}{j}'] = []
-        for j in range(1, args.K + 1):
-            log[f'Q_{i}{j}'] = []
-
-    return log
-
-def initialize_ODE_dictionnary(args):
-    logs_ODES = {}
-    logs_ODES["test_loss1"] = []
-    logs_ODES["test_loss2"] = []
-    logs_ODES["steps"] = []
-    logs_ODES["forgetting"] = []
-    logs_ODES["transfer"] = []
-    for i in range (1, args.K+1):
-        logs_ODES[f"ha_{i}"] = []
-        logs_ODES[f"hb_{i}"] = []
-    for i in range (1, args.K+1):
-        for j in range (1,args.M+1):
-            logs_ODES[f"R_{i}{j}"] = []
-            logs_ODES[f"U_{i}{j}"] = []
-    
-    for i in range (1, args.K+1):
-        for j in range (1,args.K+1):
-            logs_ODES[f"Q_{i}{j}"] = []
-
-            
-    for i in range (1, args.K+1):
-        for j in range (1,args.L+1):
-            logs_ODES[f"G_{i}{j}"] = []
-            logs_ODES[f'D_{i}{j}'] = []
-    for i in range (1, args.L+1):
-        for j in range (1,args.L+1):
-            logs_ODES[f"Phi_{i}{j}"] = []
-    for i in range (1, args.M+1):
-        for j in range (1, args.L+1):
-            logs_ODES[f"Gamma_{i}{j}"] = []
-            logs_ODES[f"Lambda_{i}{j}"] = []
-
-    return logs_ODES
-
-def save_ODES_in_dictionnary(logs_ODES, args,task=1,
-                             Ha=None, R=None, Q=None, U=None,
-                             G= None, D=None,Phi=None, Gamma=None, Lambda=None, Hb=None):
-    if task == 1:
-        #OPs for first half of training
-        for i in range (1, args.K+1):
-            logs_ODES[f"ha_{i}"].append(Ha[i-1].item())
-                
-        for i in range (1, args.K+1):
-            for j in range (1,args.M+1):
-                logs_ODES[f"R_{i}{j}"].append(R[i-1, j-1].item())
-                logs_ODES[f"U_{i}{j}"].append(U[i-1, j-1].item())
-    
-        for i in range (1, args.K+1):
-            for j in range (1,args.K+1):
-                logs_ODES[f"Q_{i}{j}"].append(Q[i-1, j-1].item())
-            
-        #OPs for second half of training
-        for i in range (1,args.K+1):
-            for j in range (1,args.L+1):
-                logs_ODES[f"G_{i}{j}"].append(0)
-                logs_ODES[f'D_{i}{j}'].append(0)
-        for i in range(1, args.K+1):
-            logs_ODES[f"hb_{i}"].append(0)
-        for i in range (1, args.L+1):
-            for j in range (1,args.L+1):
-                logs_ODES[f"Phi_{i}{j}"].append(0)
-        for i in range (1, args.M+1):
-            for j in range (1, args.L+1):
-                logs_ODES[f"Gamma_{i}{j}"].append(0)
-                logs_ODES[f"Lambda_{i}{j}"].append(0)
-                
-    elif task == 2:   
-        for i in range (1, args.K+1):
-            logs_ODES[f"ha_{i}"].append(0)
-                
-        for i in range (1, args.K+1):
-            for j in range (1,args.M+1):
-                logs_ODES[f"R_{i}{j}"].append(0)
-                logs_ODES[f"U_{i}{j}"].append(0)
-    
-        for i in range (1, args.K+1):
-            for j in range (1,args.K+1):
-                logs_ODES[f"Q_{i}{j}"].append(0)
-            
-        #OPs for second half of training
-        for i in range (1,args.K+1):
-            for j in range (1,args.L+1):
-                logs_ODES[f"G_{i}{j}"].append(G[i-1, j-1].item())
-                logs_ODES[f'D_{i}{j}'].append(D[i-1, j-1].item())
-        for i in range(1, args.K+1):
-            logs_ODES[f"hb_{i}"].append(Hb[i-1].item())
-        for i in range (1, args.L+1):
-            for j in range (1,args.L+1):
-                logs_ODES[f"Phi_{i}{j}"].append(Phi[i-1, j-1].item())
-        for i in range (1, args.M+1):
-            for j in range (1, args.L+1):
-                logs_ODES[f"Gamma_{i}{j}"].append(Gamma[i-1, j-1].item())
-                logs_ODES[f"Lambda_{i}{j}"].append(Lambda[i-1, j-1].item())
-    else :
-        raise ValueError("task must be either 1 or 2")
-    return logs_ODES
-    
-
-def save_overlaps_in_dictionnary(logs, args, overlap_t1, overlap_t2, task=1, 
-                                 overlap_t1_LoRA=None, overlap_t2_LoRA=None, overlap_t1_wt=None, overlap_t2_wt=None, overlap_t1_full=None, overlap_t2_full=None, Norm_LoRA=None):
-    if task ==1 :
-        for i in range(1,args.K+1):
-            logs[f'norm_LoRA_{i}{i}'].append(0)
-            for j in range(1,args.M+1):
-                logs[f'overlap_t1_{i}{j}'].append(overlap_t1[i-1, j-1].item())
-                logs[f'overlap_t2_{i}{j}'].append(overlap_t2[i-1, j-1].item())
-                logs[f'overlap_t1_LoRA_{i}{j}'].append(0)
-                logs[f'overlap_t2_LoRA_{i}{j}'].append(0)
-                logs[f'overlap_t1_wt_{i}{j}'].append(0)
-                logs[f'overlap_t2_wt_{i}{j}'].append(0)     
-                logs[f'overlap_t1_full_{i}{j}'].append(overlap_t1[i-1, j-1].item())
-                logs[f'overlap_t2_full_{i}{j}'].append(overlap_t2[i-1, j-1].item())
-
-    elif task == 2:
-        for i in range(1,args.K+1):
-          logs[f'norm_LoRA_{i}{i}'].append(Norm_LoRA[i-1].item())
-          for j in range(1,args.M+1):
-            logs[f'overlap_t1_{i}{j}'].append(overlap_t1[i-1, j-1].item())
-            logs[f'overlap_t2_{i}{j}'].append(overlap_t2[i-1, j-1].item())
-            logs[f'overlap_t1_LoRA_{i}{j}'].append(overlap_t1_LoRA[i-1,j-1].item())
-            logs[f'overlap_t2_LoRA_{i}{j}'].append(overlap_t2_LoRA[i-1,j-1].item())
-            logs[f'overlap_t1_wt_{i}{j}'].append(overlap_t1_wt[i-1,j-1].item())
-            logs[f'overlap_t2_wt_{i}{j}'].append(overlap_t2_wt[i-1,j-1].item()) 
-            logs[f'overlap_t1_full_{i}{j}'].append(overlap_t1_full[i-1,j-1].item())
-            logs[f'overlap_t2_full_{i}{j}'].append(overlap_t2_full[i-1,j-1].item())
+    if args.LoRA:
+        metadata["method"] = "LoRA"
+    elif args.wt:
+        metadata["method"] = "LoRA_full_rank"
+    else:
+        metadata["method"] = "standard"
         
-    else :
-        raise ValueError("task must be either 1 or 2")
-    return logs
-
-def save_order_parameters_in_dictionnary(logs, args, task=1, 
-                                         Q=None, R=None, U=None, Ha=None,
-                                         D=None, Hb=None, G=None, Phi=None, Gamma=None, Lambda=None):
-    if task ==1 :
-        #Ops for first half of training
-        for i in range(1,args.K+1):
-            logs[f'ha_{i}'].append(Ha[i-1].item())
-            for j in range(1,args.M+1):
-                logs[f'R_{i}{j}'].append(R[i-1, j-1].item())
-                logs[f'U_{i}{j}'].append(U[i-1, j-1].item())
-        for i in range(1,args.K+1):
-            for j in range(1,args.K+1):
-                logs[f'Q_{i}{j}'].append(Q[i-1, j-1].item())
-                
-        #OPs for second half of training
-        for i in range(1,args.K+1):
-            logs[f'hb_{i}'].append(0)
-            for j in range(1,args.L+1):
-                logs[f'G_{i}{j}'].append(0)
-                logs[f'D_{i}{j}'].append(0)
-        for i in range(1, args.L+1):
-            for j in range(1,args.L+1):
-                logs[f'Phi_{i}{j}'].append(0)
-        for i in range(1, args.M+1):
-            for j in range(1, args.L+1):
-                logs[f'Gamma_{i}{j}'].append(0)
-                logs[f'Lambda_{i}{j}'].append(0)
-        
-    elif task ==2 :
-                #Ops for first half of training
-        for i in range(1,args.K+1):
-            logs[f'ha_{i}'].append(0)
-            for j in range(1,args.M+1):
-                logs[f'R_{i}{j}'].append(0)
-                logs[f'U_{i}{j}'].append(0)
-        for i in range(1,args.K+1):
-            for j in range(1,args.K+1):
-                logs[f'Q_{i}{j}'].append(0)
-                
-        #OPs for second half of training
-        for i in range(1,args.K+1):
-            logs[f'hb_{i}'].append(Hb[i-1].item())
-            for j in range(1,args.L+1):
-                logs[f'G_{i}{j}'].append(G[i-1, j-1].item())
-                logs[f'D_{i}{j}'].append(D[i-1, j-1].item())
-        for i in range(1, args.L+1):
-            for j in range(1,args.L+1):
-                logs[f'Phi_{i}{j}'].append(Phi[i-1, j-1].item())
-        for i in range(1, args.M+1):
-            for j in range(1, args.L+1):
-                logs[f'Gamma_{i}{j}'].append(Gamma[i-1, j-1].item())
-                logs[f'Lambda_{i}{j}'].append(Lambda[i-1, j-1].item())
-        
-    else : 
-        raise ValueError("task must be either 1 or 2")
-    return logs
+    return metadata

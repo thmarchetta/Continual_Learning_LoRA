@@ -1,0 +1,61 @@
+import numpy as np
+import os
+class ExperimentLogger:
+
+    def __init__(self, metadata=None):
+        self.metadata = metadata or {}
+        self.logs = {}
+
+    def log(self, name, value, step=None):
+
+        if name not in self.logs:
+            self.logs[name] = {"steps": [], "values": []}
+
+        self.logs[name]["values"].append(value)
+
+        if step is not None:
+            self.logs[name]["steps"].append(step)
+    
+    def log_many(self, step=None, **kwargs):
+
+        for key, value in kwargs.items():
+            self.log(key, value, step=step)
+    
+    def get(self, name):
+        return self.logs[name]
+
+    def last(self, name):
+        return self.logs[name]["values"][-1]
+    
+    def to_dict(self):
+        logs = {}
+
+        for k, v in self.logs.items():
+            logs[k] = {
+            "steps": np.array(v["steps"]),
+            "values": np.array(v["values"], dtype=object)
+            }
+
+        return {"metadata": self.metadata, "logs": logs}
+    
+    @staticmethod
+    def append_to_file(path, logger):
+
+        run = logger.to_dict()
+
+        if os.path.exists(path):
+            data = np.load(path, allow_pickle=True).item()
+            runs = data.get("runs", [])
+        else:
+            runs = []
+
+        runs.append(run)
+
+        np.save(path, {"runs": runs}, allow_pickle=True)
+
+
+    @staticmethod
+    def load_group(path):
+
+        data = np.load(path, allow_pickle=True).item()
+        return data.get("runs", [])
