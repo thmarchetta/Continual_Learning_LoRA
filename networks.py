@@ -38,8 +38,8 @@ class Student(nn.Module):
         self.head_1 = nn.Linear(args.K, 1,  bias=False)
         self.head_2 = nn.Linear(args.K, 1,  bias=False)
 
-        nn.init.normal_(self.head_1.weight, mean=0.0, std=0.0001)
-        nn.init.normal_(self.head_2.weight, mean=0.0, std=0.0001)
+        nn.init.normal_(self.head_1.weight, mean=0.0, std=1)
+        nn.init.normal_(self.head_2.weight, mean=0.0, std=1)
 
         self.A = nn.Linear(args.N, args.L, bias = False)
         self.B = nn.Linear(args.L, args.K, bias = False)

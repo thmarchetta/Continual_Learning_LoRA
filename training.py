@@ -46,6 +46,7 @@ def training(args, data, t1, t2, stud, logs_training):
     R=((W_curr @ t1_first_layer.T )/args.N) 
     U=((W_curr @ t2_first_layer.T )/args.N) 
     Ha=Ha_curr
+    
     logs_training.log_many(
     step=0,
     test_loss_1=test[0],
@@ -77,6 +78,7 @@ def training(args, data, t1, t2, stud, logs_training):
       opt.step()
 
       if _ % 500 == 0: #Saving procedure
+        
         
         test = data.test_error(stud, loss, args.P_test, LoRA=False)
         W_curr = stud.fc1.weight.detach()
@@ -241,6 +243,7 @@ def training(args, data, t1, t2, stud, logs_training):
 
     Norm_LoRA=Norm_LoRA.detach().cpu().clone(),
 )
+        
     test = data.test_error(stud, loss, args.P_test, LoRA=args.LoRA)
 
     print('End of Task 2 ----------------------')

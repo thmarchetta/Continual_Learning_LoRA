@@ -48,8 +48,7 @@ def get_OP_init(stud,data,args):
     #D0 = stud.B.weight.detach().numpy().copy()
     B_a = data.teacher_1.fc1.weight.detach().numpy().copy()
     B_b = data.teacher_2.fc1.weight.detach().numpy().copy()
-
-
+    
     OP_init = {
     "Q0": ((W0 @ W0.T) / args.N).copy(),
     "R0": ((W0 @ B_a.T) / args.N).copy(),

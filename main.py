@@ -6,9 +6,12 @@ import ODEs_theory
 import networks
 import logger
 from numpy import sqrt, arange
-argfile = "/home/theom/continual_learning_trial/parameters.json"
+argfile = "/home/theom/continual_learning/parameters.json"
 args = utils.loadJson(argfile)
-
+rhos = arange(0,1.01, 0.1)
+print(rhos)
+#for rho in rhos :
+#    args.rho = round(float(rho),1)
 metadata=utils.get_metadata(args)
 logs_ODES = logger.ExperimentLogger(metadata)
 logs_training = logger.ExperimentLogger(metadata)

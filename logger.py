@@ -27,6 +27,22 @@ class ExperimentLogger:
     def last(self, name):
         return self.logs[name]["values"][-1]
     
+    def metric_at_switch(run, metric_name, alpha, N):
+        P = alpha * N
+    
+        metric = run["logs"][metric_name]
+    
+        steps = metric["steps"]
+        values = metric["values"]
+    
+        # exact match
+        idx = np.where(steps == P)[0]
+    
+        if len(idx) == 0:
+            return None  # or raise error
+    
+        return values[idx[0]]
+    
     def to_dict(self):
         logs = {}
 

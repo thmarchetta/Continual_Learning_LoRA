@@ -23,11 +23,23 @@ def solve_ODES(args, OP_init, OP_init_switch, logs_ODES):
     Gamma = OP_init["Gam0"].copy()
     Phi = OP_init["Phi0"].copy()
     Lambda = OP_init["Lam0"].copy()
+    
+    #Compute first covariance matrix and save the losses 
+    R1 = np.concatenate([Q , R, U],axis=1)
+    R2 = np.concatenate([R.T,T,V],axis=1)
+    R3 = np.concatenate([U.T,V.T,S],axis=1)
+    C = np.concatenate( [R1,R2,R3],axis=0 )
+    
+    test_loss_1 = compute_loss_standard(C, Ha, v_a, args.K, args.M, task=1)
+    test_loss_2 = compute_loss_standard(C, Hb, v_b, args.K, args.M, task=2)
+    logs_ODES.log_many(step=0, test_loss_1=test_loss_1, test_loss_2=test_loss_2)
+    
 
     #first half of training  
     for step in range(num_steps):
 
       Q, R, U, Ha, Hb, test_loss_1, test_loss_2 = solve_ODES_standard(Q, R, U, T, V, S, Ha, Hb, v_a, v_b, args,task=1)
+    
       
       logs_ODES.log_many(step=step, test_loss_1=test_loss_1, test_loss_2=test_loss_2,
       Q=Q.copy(), R=R.copy(), U=U.copy(), Ha=Ha.copy())
@@ -106,9 +118,9 @@ def solve_ODES_standard(Q, R, U, T, V, S, Ha, Hb, v_a, v_b, args,task=1):
     Q = Q + args.integration_step * update_Q(C, args.alpha_W,v,args.K,args.M, H, task)
     U = U + args.integration_step * update_U(C, args.alpha_W,v,args.K,args.M, H, task)
     if task==1:
-        Ha = Ha + args.integration_step * update_Ha(C,Ha,args.alpha_H,v_a,args.K,args.M)
+        Ha = Ha + args.integration_step * update_H(C,Ha,args.alpha_H,v_a,args.K,args.M, task=1)
     elif task==2 :
-        Hb = Hb + args.integration_step * update_Hb_standard(C,Hb,args.alpha_H,v_b,args.K,args.M)
+        Hb = Hb + args.integration_step * update_H(C,Hb,args.alpha_H,v_b,args.K,args.M, task=2)
     return Q, R, U, Ha, Hb, loss1,loss2
     
 def solve_ODES_LORA(Q, R, U, T, V, S, G, D, Ha, Hb, v_a, v_b, Phi,Gamma,Lambda, gamma, args, task=2):
@@ -146,7 +158,7 @@ def I2_val_numba(C, a, b):
     cij = C[a, b]
     denom1 = np.sqrt(1.0 + C[a, a])
     denom2 = np.sqrt(1.0 + C[b, b])
-    return 2.0 * np.arcsin(cij / denom1 / denom2) / np.pi
+    return 2.0 * np.asin(cij / denom1 / denom2) / np.pi
 
 
 @njit
@@ -240,6 +252,7 @@ def update_Q(C, eta, v, K, M, H, task):
             for j in range(K):
                 sum2 += H[i] * H[j] * I3_val_numba(C, i, k, j)
             ng1[i, k] = sum1 - sum2
+            
             sum3 = 0.0
             for m in range(M):
                 sum3 += H[k] * v[m] * I3_val_numba(C, k, i, delay + m)
@@ -247,6 +260,7 @@ def update_Q(C, eta, v, K, M, H, task):
             for j in range(K):
                 sum4 += H[k] * H[j] * I3_val_numba(C, k, i, j)
             ng2[i, k] = sum3 - sum4
+            
             sum5 = 0.0
             for j in range(K):
                 for l in range(K):
@@ -273,17 +287,20 @@ def update_U(C, eta, v, K, M, H, task):
         for p in range(M):
             sum1 = 0.0
             for m in range(M):
-                sum1 += H[i] * I3_val_numba(C, i, K + M + p, delay + m) * v[m]
+                sum1 += H[i] * v[m] * I3_val_numba(C, i, K + M + p, delay + m)
             sum2 = 0.0
             for k in range(K):
-                sum2 += H[i] * I3_val_numba(C, i, K + M + p, k) * H[k]
+                sum2 += H[i] * H[k] * I3_val_numba(C, i, K + M + p, k)
             ng[i, p] = sum1 - sum2
     return eta * ng
 
 @njit
-def update_Ha(C, h, eta, v, K, M):
+def update_H(C, h, eta, v, K, M,task):
     ng = np.zeros((K,))
-    delay = K
+    if task ==1 :
+        delay = K
+    else :
+        delay = K+M
     for i in range(K):
         sum1 = 0.0
         for m in range(M):
@@ -291,19 +308,6 @@ def update_Ha(C, h, eta, v, K, M):
         sum2 = 0.0
         for k in range(K):
             sum2 += h[k] * I2_val_numba(C, k, i)
-        ng[i] = sum1 - sum2
-    return eta * ng
-
-@njit
-def update_Hb_standard(C, h, eta, v, K, M, ):
-    ng = np.zeros((K,))
-    for i in range(K):
-        sum1 = 0.0
-        for m in range(M):
-            sum1 += v[m] * I2_val_numba(C, K + M + m, i)
-        sum2 = 0.0
-        for k in range(K):
-            sum2 += h[k] * I2_val_numba(C,k, i)
         ng[i] = sum1 - sum2
     return eta * ng
 
