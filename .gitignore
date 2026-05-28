@@ -3,5 +3,6 @@ old_files/
 *.pdf
 *.csv
 *.txt
+*.png
 __pycache__/
 new_code_continual_learning.ipynb
