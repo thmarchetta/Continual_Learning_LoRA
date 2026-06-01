@@ -87,14 +87,16 @@ class Data_and_Teachers():
 
         self.teacher_1.fc2.weight.data = 1 + 0.01*torch.randn((self.M,))
         self.teacher_2.fc2.weight.data = -1 + 0.01*torch.randn((self.M,))
+        #self.teacher_1.fc2.weight.data = torch.randn((self.M,))
+        #self.teacher_2.fc2.weight.data = torch.randn((self.M,))
 
         return self.teacher_1, self.teacher_2
 
     def get_data(self):
-        self.datum = torch.randn((1, self.N)).to(self.device) # sample x
+        self.datum = torch.randn((1, self.N)).to(self.device)
 
-        self.yt1 = self.teacher_1(self.datum).detach() # obtain y from teacher 1
-        self.yt2 = self.teacher_2(self.datum).detach() # obtain y from teacher 2
+        self.yt1 = self.teacher_1(self.datum).detach()
+        self.yt2 = self.teacher_2(self.datum).detach()
 
         return self.datum, self.yt1, self.yt2
 

@@ -25,27 +25,18 @@ def training(args, data, t1, t2, stud, logs_training):
         {"params": stud.head_2.parameters(), "lr": args.alpha_H/args.N},] )
 
     loss = nn.MSELoss()
-    
-    Tcos_t1 = torch.sqrt(torch.diag(t1_first_layer @ t1_first_layer.T / args.N )) #Norm of first teacher matrix, used to compute overlaps
-    Tcos_t2 = torch.sqrt(torch.diag(t2_first_layer @ t2_first_layer.T / args.N )) #Norm of second teacher matrix, used to compute overlaps
-
+  
     #Saving metrics before training
     test = data.test_error(stud, loss, args.P_test, LoRA=False)
-    W_curr = stud.fc1.weight.detach()
-    Ha_curr = stud.head_1.weight.detach().numpy().flatten().copy()
+    W_init = stud.fc1.weight.detach()
+    Ha_init = stud.head_1.weight.detach().numpy().flatten().copy()
 
-    #overlaps for initialization
-    Rcos_t1 = (stud.fc1.weight @ t1_first_layer.T) / args.N
-    Rcos_t2 = (stud.fc1.weight @ t2_first_layer.T) / args.N
-    Qcos = torch.sqrt(torch.diag(stud.fc1.weight @ stud.fc1.weight.T / args.N))
-    overlap_t1 = (Rcos_t1.T / Qcos).T /Tcos_t1
-    overlap_t2 = (Rcos_t2.T / Qcos).T /Tcos_t2
     
     #Order parameters for initialization
-    Q=((W_curr @ W_curr.T)/args.N) 
-    R=((W_curr @ t1_first_layer.T )/args.N) 
-    U=((W_curr @ t2_first_layer.T )/args.N) 
-    Ha=Ha_curr
+    Q=((W_init @ W_init.T)/args.N) 
+    R=((W_init @ t1_first_layer.T )/args.N) 
+    U=((W_init @ t2_first_layer.T )/args.N) 
+    Ha=Ha_init
     
     logs_training.log_many(
     step=0,
@@ -55,10 +46,7 @@ def training(args, data, t1, t2, stud, logs_training):
     Q=Q.detach().cpu().clone(),
     R=R.detach().cpu().clone(),
     U=U.detach().cpu().clone(),
-    Ha=Ha.copy(),
-
-    overlap_t1=overlap_t1.detach().cpu().clone(),
-    overlap_t2=overlap_t2.detach().cpu().clone())
+    Ha=Ha.copy(),)
 
     print('Starting Task 1 ----------------------')
     print('Test Loss on Task 1:', test[0])
@@ -84,13 +72,6 @@ def training(args, data, t1, t2, stud, logs_training):
         W_curr = stud.fc1.weight.detach()
         Ha_curr = stud.head_1.weight.detach().numpy().flatten().copy()
         
-        #Overlaps
-        Rcos_t1 = (stud.fc1.weight @ t1_first_layer.T) / args.N
-        Rcos_t2 = (stud.fc1.weight @ t2_first_layer.T) / args.N
-        Qcos = torch.sqrt(torch.diag(stud.fc1.weight @ stud.fc1.weight.T / args.N))
-        overlap_t1 = (Rcos_t1.T / Qcos).T /Tcos_t1
-        overlap_t2 = (Rcos_t2.T / Qcos).T /Tcos_t2
-        
         #Order parameters
         Q=((W_curr @ W_curr.T)/args.N) 
         R=((W_curr @ t1_first_layer.T )/args.N) 
@@ -105,10 +86,7 @@ def training(args, data, t1, t2, stud, logs_training):
         Q=Q.detach().cpu().clone(),
         R=R.detach().cpu().clone(),
         U=U.detach().cpu().clone(),
-        Ha=Ha_curr.copy(),
-
-        overlap_t1=overlap_t1.detach().cpu().clone(),
-        overlap_t2=overlap_t2.detach().cpu().clone())
+        Ha=Ha_curr.copy())
 
 
     test = data.test_error(stud, loss, args.P_test, LoRA=False)
@@ -161,88 +139,51 @@ def training(args, data, t1, t2, stud, logs_training):
       if _ % 500 == 0:
         
         test = data.test_error(stud, loss, args.P_test, LoRA=args.LoRA)
-        
-        #Overlaps for Ws
-        Rcos_t1 = (stud.fc1.weight @ t1_first_layer.T) / args.N
-        Rcos_t2 = (stud.fc1.weight @ t2_first_layer.T) / args.N
-        Norm_student = torch.sqrt(torch.diag(stud.fc1.weight @ stud.fc1.weight.T / args.N))
-        overlap_t1 = (Rcos_t1.T / Norm_student).T /Tcos_t1
-        overlap_t2 = (Rcos_t2.T / Norm_student).T /Tcos_t2
-        
-        #Overlaps for LoRA
-        delta_W = (stud.B.weight @ stud.A.weight) / sqrt(args.L) #Normalization due to the forward pass
-        Rcos_t1_LoRA = (delta_W @ t1_first_layer.T) / args.N
-        Rcos_t2_LoRA = (delta_W @ t2_first_layer.T) / args.N
-        Norm_LoRA = torch.sqrt(torch.diag(delta_W @ delta_W.T / args.N))
-        overlap_t1_LoRA = (Rcos_t1_LoRA.T / Norm_LoRA).T /Tcos_t1
-        overlap_t2_LoRA = (Rcos_t2_LoRA.T / Norm_LoRA).T /Tcos_t2
-        
-        #Overlaps for wt
-        Rcos_t1_wt = (stud.wt.weight @ t1_first_layer.T) / args.N
-        Rcos_t2_wt = (stud.wt.weight @ t2_first_layer.T) / args.N
-        Norm_wt = torch.sqrt(torch.diag(stud.wt.weight @ stud.wt.weight.T / args.N))
-        overlap_t1_wt = (Rcos_t1_wt.T / Norm_wt).T /Tcos_t1
-        overlap_t2_wt = (Rcos_t2_wt.T / Norm_wt).T /Tcos_t2
-        
-        if args.wt == False and args.LoRA == True :
-          full_student = stud.fc1.weight + delta_W
-          
-        elif args.wt == True and args.LoRA == False :
-          full_student = stud.fc1.weight + stud.wt.weight
-          
-        else :
-          full_student = stud.fc1.weight
-        
-        Rcos_t1_full = (full_student @ t1_first_layer.T) / args.N
-        Rcos_t2_full = (full_student @ t2_first_layer.T) / args.N
-        Norm_full = torch.sqrt(torch.diag(full_student @ full_student.T / args.N))
-        overlap_t1_full = (Rcos_t1_full.T / Norm_full).T /Tcos_t1
-        overlap_t2_full = (Rcos_t2_full.T / Norm_full).T /Tcos_t2
-                
+
         #Order parameters 
-        W0 = stud.fc1.weight.detach()
+        W_curr = stud.fc1.weight.detach()
+        Ha_curr = stud.head_1.weight.detach().numpy().flatten().copy()
+        Hb_curr = stud.head_2.weight.detach().numpy().flatten().copy()
         A_curr = stud.A.weight.detach()
         B_curr = stud.B.weight.detach()
-        Hb_curr = stud.head_2.weight.detach().flatten()
 
-        D=B_curr
-        Hb=Hb_curr
-        G=((W0 @ A_curr.T)/args.N)
-        Phi=((A_curr @ A_curr.T)/args.N)
-        Gamma=(( t2_first_layer @ A_curr.T)/args.N)
-        Lambda=(( t1_first_layer @ A_curr.T)/args.N)
         
         logs_training.log_many(
-    step=P + _,
+          step=P + _,
+          test_loss_1=test[0],
+          test_loss_2=test[1],
+          forgetting=test[0] - test_1_switch,
+          transfer=test_2_switch - test[1],)
 
-    test_loss_1=test[0],
-    test_loss_2=test[1],
-    forgetting=test[0] - test_1_switch,
-    transfer=test_2_switch - test[1],
-    
-    # Order parameters
-    D=D.detach().cpu().clone(),
-    G=G.detach().cpu().clone(),
-    Phi=Phi.detach().cpu().clone(),
-    Gamma=Gamma.detach().cpu().clone(),
-    Lambda=Lambda.detach().cpu().clone(),
-    Hb=Hb.detach().cpu().clone(),
-
-    # Overlaps
-    overlap_t1=overlap_t1.detach().cpu().clone(),
-    overlap_t2=overlap_t2.detach().cpu().clone(),
-
-    overlap_t1_LoRA=overlap_t1_LoRA.detach().cpu().clone(),
-    overlap_t2_LoRA=overlap_t2_LoRA.detach().cpu().clone(),
-
-    overlap_t1_wt=overlap_t1_wt.detach().cpu().clone(),
-    overlap_t2_wt=overlap_t2_wt.detach().cpu().clone(),
-
-    overlap_t1_full=overlap_t1_full.detach().cpu().clone(),
-    overlap_t2_full=overlap_t2_full.detach().cpu().clone(),
-
-    Norm_LoRA=Norm_LoRA.detach().cpu().clone(),
-)
+        if args.LoRA :
+          
+          G=((W_curr @ A_curr.T)/args.N)
+          Phi=((A_curr @ A_curr.T)/args.N)
+          Gamma=(( t2_first_layer @ A_curr.T)/args.N)
+          Lambda=(( t1_first_layer @ A_curr.T)/args.N)
+          
+          logs_training.log_many(
+          step=P + _,
+          D=B_curr.detach().cpu().clone(),
+          G=G.detach().cpu().clone(),
+          Phi=Phi.detach().cpu().clone(),
+          Gamma=Gamma.detach().cpu().clone(),
+          Lambda=Lambda.detach().cpu().clone(),
+          Hb=Hb_curr.copy())
+          
+        else :
+          
+          Q=((W_curr @ W_curr.T)/args.N) 
+          R=((W_curr @ t1_first_layer.T )/args.N) 
+          U=((W_curr @ t2_first_layer.T )/args.N)
+          
+          logs_training.log_many(
+            step=P + _,
+            Q=Q.detach().cpu().clone(),
+            R=R.detach().cpu().clone(),
+            U=U.detach().cpu().clone(),
+            Hb=Hb_curr.copy())
+        
         
     test = data.test_error(stud, loss, args.P_test, LoRA=args.LoRA)
 

@@ -20,6 +20,8 @@ def solve_ODES(args, OP_init, OP_init_switch, logs_ODES):
     v_b = OP_init["v_b"] #T2 head
     D = OP_init["D0"] # LoRA low rank matrix
     #Parameters for second half of training 
+    
+    G = OP_init["G0"]
     Gamma = OP_init["Gam0"].copy()
     Phi = OP_init["Phi0"].copy()
     Lambda = OP_init["Lam0"].copy()
@@ -48,14 +50,13 @@ def solve_ODES(args, OP_init, OP_init_switch, logs_ODES):
     test_1_switch = logs_ODES.last("test_loss_1")
     test_2_switch = logs_ODES.last("test_loss_2")
 
-    ##Using initializations of experiment to have perfect match, as the ODEs are capricious
-    Ha = OP_init_switch["Ha0_switch"]
-    Q = OP_init_switch["Q0_switch"]
-    R = OP_init_switch["R0_switch"]
-    U = OP_init_switch["U0_switch"]
-    G = OP_init_switch["G0_switch"]
+    #By hand selection procedure of non-null entry of matrix B when we only train A.
     if args.A_only : 
-        D = OP_init_switch["D0_switch"]
+        HA_abs = np.abs(Ha)
+        idx = np.argpartition(HA_abs, -(args.K - args.L))[-(args.K - args.L):]
+        D = np.zeros((args.K, args.L), dtype=np.float64)
+        remaining = np.setdiff1d(np.arange(args.K), idx)
+        D[remaining, np.arange(len(remaining)) % args.L] = 1
 
     #Second half of training 
     for step in range(num_steps):
@@ -68,29 +69,28 @@ def solve_ODES(args, OP_init, OP_init_switch, logs_ODES):
       forgetting = test_loss_1 - test_1_switch
       transfer = test_2_switch - test_loss_2
 
-      if args.LoRA:
-        logs_ODES.log_many(
+      logs_ODES.log_many(
             step=num_steps + step,
             test_loss_1=test_loss_1,
             test_loss_2=test_loss_2,
             forgetting=forgetting,
-            transfer=transfer,
-
-            G =G.copy(), Phi=Phi.copy(), Gamma=Gamma.copy(), Lambda=Lambda.copy(), Hb=Hb.copy(), D=D.copy(),
-            v_a=v_a.copy(), v_b=v_b.copy(),)
+            transfer=transfer,)
+      
+      if args.LoRA:
+        logs_ODES.log_many(
+            step=num_steps + step,
+            D=D.copy(),
+            G =G.copy(),
+            Phi=Phi.copy(),
+            Gamma=Gamma.copy(),
+            Lambda=Lambda.copy(), Hb=Hb.copy(),)
       else:
         logs_ODES.log_many(
             step=num_steps+step,
-            test_loss_1=test_loss_1,
-            test_loss_2=test_loss_2,
-            forgetting=forgetting,
-            transfer=transfer,
-
-            Q=Q.copy(), R=R.copy(), U=U.copy(),
-            T=T.copy(), V=V.copy(), S=S.copy(),
-            Ha=Ha.copy(), Hb=Hb.copy(),
-            v_a=v_a.copy(), v_b=v_b.copy(),
-        )
+            Q=Q.copy(),
+            R=R.copy(), 
+            U=U.copy(),
+            Hb=Hb.copy(),)
 
     ExperimentLogger.append_to_file(
     f"results/ODES_K={args.K}_M={args.M}.npy",

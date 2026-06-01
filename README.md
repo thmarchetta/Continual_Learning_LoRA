@@ -10,6 +10,5 @@ TODO
 
 1) Fix the initialization of the OPs in the ODES. Right now, we must still run training.
 2) Once last step is done, add two helpers in json to choose if we want to compute theory/sim
-3) Create visualization plots of order parameters at end of training while changing rho (for forgetting and transfer)
 
 
