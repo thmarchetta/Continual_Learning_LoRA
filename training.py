@@ -95,7 +95,7 @@ def training(args, data, t1, t2, stud, logs_training):
     print('Test Loss on Task 2:', test[1], '\n')
 
     #Selection rule
-    if args.A_only:
+    if args.method =="Sco-LoRA":
       val,idx = torch.topk( torch.abs(stud.head_1.weight), args.K - args.L )
       with torch.no_grad():
         k = 0
@@ -106,19 +106,30 @@ def training(args, data, t1, t2, stud, logs_training):
             stud.B.weight[i,:] = 0
             stud.B.weight[i,k % args.L] = 1
             k += 1
-    
+            
+    if args.method == "Sco-standard" : 
+      print("doing W_selection")
+      val,idx = torch.topk( torch.abs(stud.head_1.weight), args.K - args.L )
+      mask = torch.ones_like(stud.fc1.weight, device=args.device)
+      mask[idx, :] = 0.0
+
+      stud.fc1.weight.register_hook(lambda grad: grad * mask)
+
+    if args.method == "only_LoRA":
+      stud.fc1.weight.data.zero_()
+      
     W0_switch = stud.fc1.weight.detach()
     A0 = stud.A.weight.detach()
     
 
-    OP_init_switch = {
-    "Q0_switch": ((W0_switch @ W0_switch.T) / args.N).detach().cpu().numpy(),
-    "R0_switch": ((W0_switch @ t1_first_layer.T) / args.N).detach().cpu().numpy(),
-    "U0_switch": ((W0_switch @ t2_first_layer.T) / args.N).detach().cpu().numpy(),
-    "G0_switch": ((W0_switch @ A0.T) / args.N).detach().cpu().numpy(),
-    "Ha0_switch": stud.head_1.weight.detach().cpu().numpy().reshape((args.K,)),
-    "D0_switch": stud.B.weight.detach().cpu().numpy()
-    }
+    #OP_init_switch = {
+    #"Q0_switch": ((W0_switch @ W0_switch.T) / args.N).detach().cpu().numpy(),
+    #"R0_switch": ((W0_switch @ t1_first_layer.T) / args.N).detach().cpu().numpy(),
+    #"U0_switch": ((W0_switch @ t2_first_layer.T) / args.N).detach().cpu().numpy(),
+    #"Xi0_switch": ((W0_switch @ A0.T) / args.N).detach().cpu().numpy(),
+    #"Ha0_switch": stud.head_1.weight.detach().cpu().numpy().reshape((args.K,)),
+    #"D0_switch": stud.B.weight.detach().cpu().numpy()
+    #}
     test_1_switch = test[0] #Used to compute forgetting
     test_2_switch = test[1] #Used to compute transfer
     
@@ -128,7 +139,7 @@ def training(args, data, t1, t2, stud, logs_training):
       opt.zero_grad()
 
 
-      y_pred1, y_pred2 = stud(x.to(args.device), LoRA = args.LoRA, A_only=args.A_only)
+      y_pred1, y_pred2 = stud(x.to(args.device), method=args.method)
       l1 = 0.5*loss(y_pred1, y1)
       l2 = 0.5*loss(y_pred2, y2)
 
@@ -138,7 +149,7 @@ def training(args, data, t1, t2, stud, logs_training):
       
       if _ % 500 == 0:
         
-        test = data.test_error(stud, loss, args.P_test, LoRA=args.LoRA)
+        test = data.test_error(stud, loss, args.P_test, method=args.method)
 
         #Order parameters 
         W_curr = stud.fc1.weight.detach()
@@ -155,21 +166,33 @@ def training(args, data, t1, t2, stud, logs_training):
           forgetting=test[0] - test_1_switch,
           transfer=test_2_switch - test[1],)
 
-        if args.LoRA :
+        if args.method=="LoRA" or args.method =="Sco-LoRA" or args.method=="only_LoRA"  :
           
-          G=((W_curr @ A_curr.T)/args.N)
+          Xi=((W_curr @ A_curr.T)/args.N)
           Phi=((A_curr @ A_curr.T)/args.N)
           Gamma=(( t2_first_layer @ A_curr.T)/args.N)
           Lambda=(( t1_first_layer @ A_curr.T)/args.N)
           
           logs_training.log_many(
           step=P + _,
-          D=B_curr.detach().cpu().clone(),
-          G=G.detach().cpu().clone(),
+          B=B_curr.detach().cpu().clone(),
+          Xi=Xi.detach().cpu().clone(),
           Phi=Phi.detach().cpu().clone(),
           Gamma=Gamma.detach().cpu().clone(),
           Lambda=Lambda.detach().cpu().clone(),
           Hb=Hb_curr.copy())
+          
+          if args.method=="only_LoRA":
+            Q=((W_curr @ W_curr.T)/args.N) 
+            R=((W_curr @ t1_first_layer.T )/args.N) 
+            U=((W_curr @ t2_first_layer.T )/args.N)
+          
+            logs_training.log_many(
+              step=P + _,
+              Q=Q.detach().cpu().clone(),
+              R=R.detach().cpu().clone(),
+              U=U.detach().cpu().clone(),
+              Hb=Hb_curr.copy())
           
         else :
           
@@ -195,4 +218,3 @@ def training(args, data, t1, t2, stud, logs_training):
     f"results/run_K={args.K}_M={args.M}.npy",
     logs_training
     )
-    return OP_init_switch

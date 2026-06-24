@@ -11,9 +11,7 @@ class args:
         self.M = argsDict['M'] #Number of teacher heads
         self.L = argsDict['L'] #Low_dim of LoRA
         self.rho = argsDict['rho'] #task similarity
-        self.LoRA = argsDict['LoRA'] #Whether to use LoRA or not
-        self.wt = argsDict['wt'] #Whether to use the full rank matrix or not
-        self.A_only = argsDict['A_only'] #Whether to learn only the A matrix of LoRA, using a selection rule for B or both A and B
+        self.method=argsDict['method'] #training that one would like to launch. Choose between "standard", "Sco-Standard", "LoRA", "Sco-LoRA", "only_LoRA", "full_rank"
         self.beta = argsDict['beta'] #additional learning rate of LoRA
         self.alpha = argsDict['alpha'] # ratio num_examples/input_size
         self.alpha_W = argsDict['alpha_W'] #learning rate of student first layer
@@ -22,6 +20,8 @@ class args:
         self.alpha_b = argsDict['alpha_b'] #learning rate of LoRA B matrix
         self.P_test = argsDict['P_test'] #Number of examples for test set
         self.device = argsDict['device'] #device, must be set to CPU due to online learning
+        self.training = argsDict['training'] #Set to true if you want to launch training of a net
+        self.theory = argsDict['theory'] #Set to true if you want to compute theory
         self.seed = argsDict['seed'] #random seed for reproducibility
         self.path_to_res_folder = argsDict['path_to_res_folder'] #path to results folder
         self.integration_step = argsDict['integration_step'] #integration step for ODE solver
@@ -56,7 +56,7 @@ def get_OP_init(stud,data,args):
     "U0": ((W0 @ B_b.T) / args.N).copy(),
     "S0": ((B_b @ B_b.T) / args.N).copy(),
     "V0": ((B_a @ B_b.T) / args.N).copy(),
-    "G0": ((W0 @ A0.T) / args.N).copy(),
+    "Xi0": ((W0 @ A0.T) / args.N).copy(),
     "Lam0": ((B_a @ A0.T) / args.N).copy(),
     "Gam0": ((B_b @ A0.T) / args.N).copy(),
     "Phi0": ((A0 @ A0.T) / args.N).copy(),
@@ -64,7 +64,7 @@ def get_OP_init(stud,data,args):
     "Hb0": stud.head_2.weight.detach().numpy().reshape((args.K,)).copy(),
     "v_a": data.teacher_1.fc2.weight.detach().numpy().copy(),
     "v_b": data.teacher_2.fc2.weight.detach().numpy().copy(),
-    "D0" : stud.B.weight.detach().numpy().copy()
+    "B0" : stud.B.weight.detach().numpy().copy()
     }
     return OP_init
 
@@ -74,17 +74,17 @@ def get_metadata(args):
         "M": args.M,
         "K": args.K,
         "rho": args.rho,
+        "method": args.method,
         "alpha": args.alpha,
         "beta": args.beta,
         "L": args.L,
-        "A_only": args.A_only,
+        "alpha_W": args.alpha_W,
+        "alpha_H": args.alpha_H,
+        "alpha_a": args.alpha_a,
+        "alpha_b": args.alpha_b
     }
     
-    if args.LoRA:
-        metadata["method"] = "LoRA"
-    elif args.wt:
-        metadata["method"] = "LoRA_full_rank"
-    else:
-        metadata["method"] = "standard"
-        
+    if args.method  != ( "standard" or "Sco-standard" or "LoRA" or "Sco-LoRA" or "Only_LoRA" or "full_rank"):
+        raise ValueError("METHOD IS NOT IMPLEMENTED OR HAS A BAD SPELLING ")
+    #    
     return metadata

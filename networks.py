@@ -38,26 +38,30 @@ class Student(nn.Module):
         self.head_1 = nn.Linear(args.K, 1,  bias=False)
         self.head_2 = nn.Linear(args.K, 1,  bias=False)
 
-        nn.init.normal_(self.head_1.weight, mean=0.0, std=1)
-        nn.init.normal_(self.head_2.weight, mean=0.0, std=1)
+        nn.init.normal_(self.head_1.weight, mean=0.0, std=0.001)
+        nn.init.normal_(self.head_2.weight, mean=0.0, std=0.001)
 
         self.A = nn.Linear(args.N, args.L, bias = False)
         self.B = nn.Linear(args.L, args.K, bias = False)
 
         nn.init.normal_(self.A.weight, mean=0.0, std=0.001)
-        nn.init.normal_(self.B.weight, mean=0.0, std=0.001)
+        nn.init.normal_(self.B.weight, mean=0.0, std=1)
 
 
-    def forward(self, x, LoRA=False, A_only=False):
+    def forward(self, x, method):
         h = self.fc1(x)/(self.N**0.5)
-        if LoRA:
+        if method == "LoRA" or method=="Sco-LoRA":
           self.fc1.weight.detach_()
-          if A_only == True :
+          if method=="Sco-LoRA" :
             self.B.weight.detach_()
           l = self.A(x)/(self.N**0.5)
           l = self.B(l)
           h = h + (self.beta/sqrt(self.L)) * l
 
+        if method=="only_LoRA" :
+            self.fc1.weight.detach_()
+            h = (self.beta/sqrt(self.L)) * l
+            
         h = torch.erf(h/sqrt(2))
 
         o1 = self.head_1(h)
@@ -108,11 +112,11 @@ class Data_and_Teachers():
     def sample_x(self, P_test):
         return torch.randn(P_test, self.N, device=self.device)
 
-    def test_error(self, model, loss, P_test, LoRA=False):
+    def test_error(self, model, loss, P_test, method="standard"):
         x = self.sample_x(P_test)
         y1, y2 = self.get_target(x)
 
-        y_pred1, y_pred2 = model(x, LoRA=LoRA)
+        y_pred1, y_pred2 = model(x, method=method)
 
         l1 = 0.5 * loss(y_pred1, y1)
         l2 = 0.5 * loss(y_pred2, y2)

@@ -73,6 +73,9 @@ class ExperimentLogger:
     @staticmethod
     def load_group(path):
 
+        if not os.path.exists(path):
+            return []
+
         data = np.load(path, allow_pickle=True).item()
         return data.get("runs", [])
     
