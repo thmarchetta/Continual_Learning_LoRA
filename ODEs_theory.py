@@ -2,9 +2,114 @@ from numba import njit
 import numpy as np
 from logger import ExperimentLogger
 
+
+def initialize_B_freeze_K_minus_L(Ha, C, v_T1, args):
+
+    num_keep = args.K - args.rows_to_freeze
+    if num_keep <= 0:
+        idx = np.array([], dtype=np.int64)
+    elif num_keep >= args.K:
+        idx = np.arange(args.K, dtype=np.int64)
+    else:
+        HA_abs = np.abs(Ha)
+        if args.scoring_method == "SDGM":
+            idx = np.argpartition(HA_abs, -num_keep)[-num_keep:]
+        elif args.scoring_method == "inv_SDGM":
+            idx = np.argpartition(HA_abs, num_keep)[:num_keep]
+        elif args.scoring_method == "re-use":
+            base_loss = compute_loss_standard(
+                C, Ha, v_T1, args.K, args.M, task=1
+            )
+            importance_scores = np.zeros(args.K)
+            for k in range(args.K):
+                Ha_ablated = Ha.copy()
+                Ha_ablated[k] = 0.0
+                ablated_loss = compute_loss_standard(
+                    C, Ha_ablated, v_T1, args.K, args.M, task=1
+                )
+                importance_scores[k] = ablated_loss - base_loss
+            idx = np.argpartition(
+                importance_scores, -num_keep
+            )[-num_keep:]
+        else:
+            raise ValueError(
+                f"Unknown scoring_method: {args.scoring_method}"
+            )
+    B = np.zeros((args.K, args.L), dtype=np.float64)
+    remaining = np.setdiff1d(np.arange(args.K), idx)
+    if len(remaining) > 0:
+        B[remaining, np.arange(len(remaining)) % args.L] = 1.0
+
+    return B, idx
+
+def initialize_B_freeze_L(Ha, C, v_T1, args):
+    if not 0 <= args.rows_to_freeze <= args.K:
+        raise ValueError(
+            f"rows_to_freeze must satisfy 0 <= rows_to_freeze <= K, "
+            f"got rows_to_freeze={args.rows_to_freeze}, K={args.K}"
+        )
+
+    num_active = args.K - args.rows_to_freeze
+
+    B = np.zeros((args.K, args.L), dtype=np.float64)
+
+    if num_active == 0:
+        return B, np.array([], dtype=np.int64)
+
+    if num_active == args.K:
+        idx = np.arange(args.K, dtype=np.int64)
+
+    else:
+        HA_abs = np.abs(Ha)
+
+        if args.scoring_method == "SDGM":
+            # Freeze largest |Ha| -> keep smallest |Ha| active
+            idx = np.argpartition(
+                HA_abs, num_active
+            )[:num_active]
+
+        elif args.scoring_method == "inv_SDGM":
+            # Freeze smallest |Ha| -> keep largest |Ha| active
+            idx = np.argpartition(
+                HA_abs, -num_active
+            )[-num_active:]
+
+        elif args.scoring_method == "re-use":
+            base_loss = compute_loss_standard(
+                C, Ha, v_T1, args.K, args.M, task=1
+            )
+
+            importance_scores = np.zeros(args.K)
+
+            for k in range(args.K):
+                Ha_ablated = Ha.copy()
+                Ha_ablated[k] = 0.0
+
+                ablated_loss = compute_loss_standard(
+                    C, Ha_ablated, v_T1,
+                    args.K, args.M, task=1
+                )
+
+                importance_scores[k] = ablated_loss - base_loss
+
+            idx = np.argpartition(
+                importance_scores, num_active
+            )[:num_active]
+
+        else:
+            raise ValueError(
+                f"Unknown scoring_method: {args.scoring_method}"
+            )
+
+    # idx = active/plastic rows
+    B[idx, np.arange(num_active) % args.L] = 1.0
+    print("Ha abs", HA_abs)
+    print("B", B)
+    return B, idx
+
 def solve_ODES(args, OP_init, logs_ODES):
-    
-    gamma = args.beta/np.sqrt(args.L) #Effective learning rate of LoRA updates
+    lr_LoRA = args.gamma/np.sqrt(args.L)
+    #lr_LoRA = args.gamma
     num_steps = int( args.alpha / args.integration_step)
 
     #Parameters for first half of training
@@ -14,17 +119,16 @@ def solve_ODES(args, OP_init, logs_ODES):
     V = OP_init["V0"] # T1 - T2
     T = OP_init["T0"] # T1 - T1
     S = OP_init["S0"] # T2 - T2
-    Ha = OP_init["Ha0"] #Stud First head
-    Hb = OP_init["Hb0"] #Stud Second head
-    v_a = OP_init["v_a"] #T1 head
-    v_b = OP_init["v_b"] #T2 head
-    B = OP_init["B0"] # LoRA low rank matrix
+    h1 = OP_init["h1_0"] #Stud First head
+    h2 = OP_init["h2_0"] #Stud Second head
+    v_T1 = OP_init["v_T1"] #T1 head
+    v_T2 = OP_init["v_T2"] #T2 head
     #Parameters for second half of training 
-    
-    Xi = OP_init["Xi0"]
-    Gamma = OP_init["Gam0"].copy()
-    Phi = OP_init["Phi0"].copy()
-    Lambda = OP_init["Lam0"].copy()
+    Xi = OP_init["Xi0"] #Stud - A
+    Gamma = OP_init["Gam0"] #T2 - A
+    Phi = OP_init["Phi0"] #A - A
+    Lambda = OP_init["Lam0"] # T1- A
+    B = OP_init["B0"] # B
     
     #Compute first covariance matrix and save the losses 
     R1 = np.concatenate([Q , R, U],axis=1)
@@ -32,152 +136,109 @@ def solve_ODES(args, OP_init, logs_ODES):
     R3 = np.concatenate([U.T,V.T,S],axis=1)
     C = np.concatenate( [R1,R2,R3],axis=0 )
     
-    test_loss_1 = compute_loss_standard(C, Ha, v_a, args.K, args.M, task=1)
-    test_loss_2 = compute_loss_standard(C, Hb, v_b, args.K, args.M, task=2)
+    test_loss_1 = compute_loss_standard(C, h1, v_T1, args.K, args.M, task=1)
+    test_loss_2 = compute_loss_standard(C, h2, v_T2, args.K, args.M, task=2)
     logs_ODES.log_many(step=0, test_loss_1=test_loss_1, test_loss_2=test_loss_2)
     
 
     #first half of training  
     for step in range(num_steps):
-
-      Q, R, U, Ha, Hb, test_loss_1, test_loss_2 = solve_ODES_standard(Q, R, U, T, V, S, Ha, Hb, v_a, v_b, args,task=1)
-    
-      
-      logs_ODES.log_many(step=step, test_loss_1=test_loss_1, test_loss_2=test_loss_2,
-      Q=Q.copy(), R=R.copy(), U=U.copy(), Ha=Ha.copy())
-  
+        Q, R, U, h1, h2, test_loss_1, test_loss_2, C = solve_ODES_standard(Q, R, U, T, V, S, h1, h2, v_T1, v_T2, args,task=1)
+        logs_ODES.log_many(step=step, test_loss_1=test_loss_1, test_loss_2=test_loss_2,
+            Q=Q.copy(), R=R.copy(), U=U.copy(), h1=h1.copy())
+        
     #Used to compute forgetting and transfer 
     test_1_switch = logs_ODES.last("test_loss_1")
     test_2_switch = logs_ODES.last("test_loss_2")
     
-    #Indices related to the biggest entries of the first student head
-    HA_abs = np.abs(Ha)
-    #idx = np.argpartition(HA_abs, -(args.K - args.L))[-(args.K - args.L):]
-    idx = np.argpartition(HA_abs, -(args.K - args.L))[-(args.K - args.L):]
-
-    #By hand selection procedure of non-null entry of matrix B when we only train A.
-    if args.method == "Sco-LoRA" :
-        B = np.zeros((args.K, args.L), dtype=np.float64)
-        remaining = np.setdiff1d(np.arange(args.K), idx)
-        B[remaining, np.arange(len(remaining)) % args.L] = 1
-    
-    #If we choose to use only LoRA and not J_{switch}, we set all different overlaps from Student to be 0.
+    #Used to select rows to freeze if we use a scoring procedure
+    idx = None
+    if args.method in {"Sco-LoRA", "Sco-standard"}:
+        B, idx= initialize_B_freeze_K_minus_L(h1, C, v_T1, args)
+        
+    #If we choose to use only LoRA, we set all different teachers-student overlaps to be 0.
     if args.method =="only_LoRA" : 
         print("setting OPS to 0 due to only_LoRA")
         R = np.zeros((args.K, args.M))
         U = np.zeros((args.K, args.M))
         Q = np.zeros((args.K, args.K))
         Xi = np.zeros((args.K, args.L))
+        
     #Second half of training 
     for step in range(num_steps):
-    
-      if args.method == ("LoRA" or "Sco-LoRA" or "only_LoRA"):
-        Xi, B, Hb, Phi,Gamma,Lambda, test_loss_1, test_loss_2 = solve_ODES_LORA( Q, R, U, T, V, S, Xi, B, Ha, Hb, v_a, v_b, Phi,Gamma,Lambda, gamma, args, task=2)
-      else :
-        Q, R, U, Ha, Hb, test_loss_1, test_loss_2 = solve_ODES_standard(Q, R, U, T, V, S, Ha, Hb, v_a, v_b,args, idx, task=2)
-          
-      forgetting = test_loss_1 - test_1_switch
-      transfer = test_2_switch - test_loss_2
+        if args.method in {"LoRA", "Sco-LoRA", "only_LoRA", "Sco-standard"}:
+            Xi, B, h2, Phi,Gamma,Lambda, test_loss_1, test_loss_2 = solve_ODES_LORA( Q, R, U, T, V, S, Xi, B, h1, h2, v_T1, v_T2, Phi,Gamma,Lambda, lr_LoRA, args, task=2)
+        else :
+            Q, R, U, h1, h2, test_loss_1, test_loss_2, C = solve_ODES_standard(Q, R, U, T, V, S, h1, h2, v_T1, v_T2,args, idx, task=2)
 
-      logs_ODES.log_many(
-            step=num_steps + step,
-            test_loss_1=test_loss_1,
-            test_loss_2=test_loss_2,
-            forgetting=forgetting,
-            transfer=transfer,)
-      
-      if args.method == ("LoRA" or "Sco-LoRA"):
-        logs_ODES.log_many(
-            step=num_steps + step,
-            B=B.copy(),
-            Xi =Xi.copy(),
-            Phi=Phi.copy(),
-            Gamma=Gamma.copy(),
-            Lambda=Lambda.copy(), Hb=Hb.copy(),)
+        forgetting = test_loss_1 - test_1_switch
+        transfer = test_2_switch - test_loss_2
+        logs_ODES.log_many(step=num_steps + step, test_loss_1=test_loss_1, test_loss_2=test_loss_2,
+            forgetting=forgetting, transfer=transfer,)
+
+        if args.method in {"LoRA", "Sco-LoRA", "Sco-standard"}:
+            logs_ODES.log_many(step=num_steps + step,
+                B=B.copy(), Xi =Xi.copy(), Phi=Phi.copy(), Gamma=Gamma.copy(), Lambda=Lambda.copy(), h2=h2.copy(),)
+        
         if args.method == "only_LoRA":
-            logs_ODES.log_many(
-            step=num_steps+step,
-            Q=Q.copy(),
-            R=R.copy(), 
-            U=U.copy(),
-            Hb=Hb.copy(),)
-      else:
-        logs_ODES.log_many(
-            step=num_steps+step,
-            Q=Q.copy(),
-            R=R.copy(), 
-            U=U.copy(),
-            Hb=Hb.copy(),)
+            logs_ODES.log_many(step=num_steps+step,
+                Q=Q.copy(), R=R.copy(),  U=U.copy(), h2=h2.copy(),)
+        else:
+            logs_ODES.log_many(step=num_steps+step,
+                Q=Q.copy(), R=R.copy(),  U=U.copy(), h2=h2.copy(),)
 
 
-    ExperimentLogger.append_to_file(
-    f"results/ODES_K={args.K}_M={args.M}.npy",
-    logs_ODES
-    )
+    ExperimentLogger.append_to_file(f"results/ODES_K={args.K}_M={args.M}.npy",logs_ODES)
     return logs_ODES
     
-def solve_ODES_standard(Q, R, U, T, V, S, Ha, Hb, v_a, v_b, args, idx=None, task=1):
+def solve_ODES_standard(Q, R, U, T, V, S, h1, h2, v_T1, v_T2, args, idx=None, task=1):
     if task ==1:
-        H=Ha
-        v=v_a
+        H=h1
+        v=v_T1
     else : 
-        H=Hb
-        v=v_b
+        H=h2
+        v=v_T2
     R1 = np.concatenate([Q , R, U],axis=1)
     R2 = np.concatenate([R.T,T,V],axis=1)
     R3 = np.concatenate([U.T,V.T,S],axis=1)
-    C = np.concatenate( [R1,R2,R3],axis=0 )
+    C = np.concatenate( [R1,R2,R3],axis=0)
     
-    loss1 = compute_loss_standard(C, Ha, v_a, args.K, args.M, task=1)
-    loss2 = compute_loss_standard(C, Hb, v_b, args.K, args.M, task=2)
+    loss1 = compute_loss_standard(C, h1, v_T1, args.K, args.M, task=1)
+    loss2 = compute_loss_standard(C, h2, v_T2, args.K, args.M, task=2)
 
-    #Update rule on only a fraction of the order parameters for second task, as we update only some rows of the weight matrix.
-    if (args.method =="Sco-standard") and (idx is not None) :
-        R = R + args.integration_step * update_R(C, args.alpha_W,v,args.K,args.M, H, task, idx)
-        Q = Q + args.integration_step * update_Q(C, args.alpha_W,v,args.K,args.M, H, task, idx)
-        U = U + args.integration_step * update_U(C, args.alpha_W,v,args.K,args.M, H, task, idx)
-    
-    #Normal update rule
-    else:
-        R = R + args.integration_step * update_R(C, args.alpha_W,v,args.K,args.M, H, task)
-        Q = Q + args.integration_step * update_Q(C, args.alpha_W,v,args.K,args.M, H, task)
-        U = U + args.integration_step * update_U(C, args.alpha_W,v,args.K,args.M, H, task)
+    R = R + args.integration_step * update_R(C, args.alpha_W,v,args.K,args.M, H, task)
+    Q = Q + args.integration_step * update_Q(C, args.alpha_W,v,args.K,args.M, H, task)
+    U = U + args.integration_step * update_U(C, args.alpha_W,v,args.K,args.M, H, task)
         
     if task==1:
-        Ha = Ha + args.integration_step * update_H(C,Ha,args.alpha_H,v_a,args.K,args.M, task=1)
-    elif task==2 :
-        Hb = Hb + args.integration_step * update_H(C,Hb,args.alpha_H,v_b,args.K,args.M, task=2)
-    return Q, R, U, Ha, Hb, loss1,loss2
+        h1 = h1 + args.integration_step * update_H(C,h1,args.alpha_H,v_T1,args.K,args.M, task=1)
+    elif task==2:
+        h2 = h2 + args.integration_step * update_H(C,h2,args.alpha_H,v_T2,args.K,args.M, task=2)
+    return Q, R, U, h1, h2, loss1,loss2, C
     
-def solve_ODES_LORA(Q, R, U, T, V, S, Xi, B, Ha, Hb, v_a, v_b, Phi,Gamma,Lambda, gamma, args, task=2):
+def solve_ODES_LORA(Q, R, U, T, V, S, Xi, B, h1, h2, v_T1, v_T2, Phi,Gamma,Lambda, lr_LoRA, args, task=2):
+    
+    R1 = np.concatenate([ Q, Q + lr_LoRA*Xi @ B.T, U, Xi, R],axis=1)
+    R2 = np.concatenate([ Q.T + lr_LoRA * B @ Xi.T, Q + lr_LoRA*(Xi @ B.T + B @ Xi.T) + (lr_LoRA**2) * B @ Phi @ B.T, U + lr_LoRA * B @ Gamma.T, Xi + lr_LoRA * B @ Phi.T, R + lr_LoRA*B@ Lambda.T ],axis=1)
+    R3 = np.concatenate([ U.T, U.T + lr_LoRA *  Gamma @ B.T, S, Gamma, V.T ],axis=1)
+    R4 = np.concatenate([ Xi.T, Xi.T + lr_LoRA * Phi @ B.T, Gamma.T, Phi, Lambda.T ],axis=1)
+    R5 = np.concatenate([R.T, R.T + lr_LoRA * Lambda @ B.T, V, Lambda, T], axis=1)
+    C = np.concatenate([R1,R2,R3,R4, R5],axis=0)
 
-      R1 = np.concatenate([ Q, Q + gamma*Xi @ B.T , U , Xi],axis=1)
-      R2 = np.concatenate([ Q.T + gamma * B @ Xi.T, Q + gamma*(Xi @ B.T + B @ Xi.T) + (gamma**2) * B @ Phi @ B.T , U + gamma * B @ Gamma.T , Xi + gamma * B @ Phi.T ],axis=1)
-      R3 = np.concatenate([ U.T , U.T + gamma *  Gamma @ B.T , S, Gamma ],axis=1)
-      R4 = np.concatenate([ Xi.T , Xi.T + gamma * Phi @ B.T , Gamma.T , Phi ],axis=1)
-      C = np.concatenate([R1,R2,R3,R4],axis=0)
-      
-      loss2 = compute_loss_LoRA(C, Hb, v_b, args.K, args.M)
+    loss1 = compute_loss_LoRA(C, h1, v_T1, args.K, args.M, args.L, task=1)    
+    loss2 = compute_loss_LoRA(C, h2, v_T2, args.K, args.M, args.L, task=2)
     
-      R1_a = np.concatenate([ Q + gamma*(Xi @ B.T + B @ Xi.T) + (gamma**2) * B @ Phi @ B.T , R + gamma * B @ Lambda.T , U + gamma * B @ Gamma.T],axis=1)
-      R2_a = np.concatenate([ R.T + gamma * Lambda @ B.T, T , V ],axis=1)
-      R3_a = np.concatenate([ U.T + gamma * Gamma @ B.T , V.T, S ],axis=1)
-      C_a = np.concatenate([R1_a,R2_a,R3_a],axis=0)
+    Phi = Phi + args.integration_step * update_Phi(C, h2, args.alpha_a, v_T2, args.K, args.M, args.L, B, lr_LoRA)
+    Gamma = Gamma + args.integration_step * update_Gamma(C,h2,args.alpha_a,v_T2,args.K,args.M,args.L,B,lr_LoRA)
+    Lambda = Lambda + args.integration_step * update_Lambda(C,h2,args.alpha_a,v_T2,args.K,args.M,args.L,B,lr_LoRA)
+    Xi = Xi + args.integration_step * update_Xi(C,h2,args.alpha_a,v_T2,args.K,args.M,args.L,B,lr_LoRA)
+    h2 = h2 + args.integration_step * update_h2(C,h2,args.alpha_H,v_T2,args.K,args.M)
+    if args.method in["Sco-LoRA", "Sco-standard"]:
+        B = B
+    else:
+        B = B + args.integration_step * update_B(C,h2,args.alpha_b,v_T2,args.K,args.M,args.L,lr_LoRA)
 
-      loss1 = compute_loss_standard(C_a, Ha, v_a, args.K, args.M, task=1)
-    
-      Phi = Phi + args.integration_step * update_Phi(C, Hb, args.alpha_a, v_b, args.K, args.M, args.L, B, gamma)
-      Gamma = Gamma + args.integration_step * update_Gamma(C,Hb,args.alpha_a,v_b,args.K,args.M,args.L,B,gamma)
-      Lambda = Lambda + args.integration_step * update_Lambda(C_a,Hb,args.alpha_a,v_b,args.K,args.M,args.L,B,gamma)
-      Xi = Xi + args.integration_step * update_Xi(C,Hb,args.alpha_a,v_b,args.K,args.M,args.L,B,gamma)
-      Hb = Hb + args.integration_step * update_Hb(C,Hb,args.alpha_H,v_b,args.K,args.M)
-      if args.method =="Sco-LoRA":
-          B = B
-      else:
-          B = B + args.integration_step * update_B(C,Hb,args.alpha_b,v_b,args.K,args.M,args.L,gamma)
-          
-        
-      return Xi, B, Hb, Phi,Gamma,Lambda, loss1, loss2
+    return Xi, B, h2, Phi, Gamma, Lambda, loss1, loss2
 
 @njit
 def I2_val_numba(C, a, b):
@@ -185,7 +246,6 @@ def I2_val_numba(C, a, b):
     denom1 = np.sqrt(1.0 + C[a, a])
     denom2 = np.sqrt(1.0 + C[b, b])
     return 2.0 * np.asin(cij / denom1 / denom2) / np.pi
-
 
 @njit
 def I3_val_numba(C, a, b, c):
@@ -215,7 +275,6 @@ def I4_val_numba(C, a, b, c, d):
     Ccd = C[c, d]
 
     Del4 = (1.0 + Caa)*(1.0 + Cbb) - Cab*Cab
-
     Del0 = (
         Del4*Ccd
         - Cbc*Cbd*(1.0 + Caa)
@@ -223,14 +282,12 @@ def I4_val_numba(C, a, b, c, d):
         + Cab*Cac*Cbd
         + Cab*Cad*Cbc
     )
-
     Del1 = (
         Del4*(1.0 + Ccc)
         - (Cbc*Cbc)*(1.0 + Caa)
         - (Cac*Cac)*(1.0 + Cbb)
         + 2.0*Cab*Cac*Cbc
     )
-
     Del2 = (
         Del4*(1.0 + Cdd)
         - (Cbd*Cbd)*(1.0 + Caa)
@@ -239,11 +296,12 @@ def I4_val_numba(C, a, b, c, d):
     )
 
     return 4.0 * np.asin(Del0 / np.sqrt(Del1*Del2)) \
-           / np.pi / np.pi / np.sqrt(Del4)
-           
-#ODE LGS
+        / np.pi / np.pi / np.sqrt(Del4)
+
+
+#Implementation of the ODEs from "Continual Learning in the Teacher-Student Setup: Impact of Task Similarity", Lee et. Al, https://arxiv.org/abs/2107.04384
 @njit
-def update_R(C, eta, v, K, M, H, task, idx=None):
+def update_R(C, eta, v, K, M, H, task):
     ng = np.zeros((K, M))
     if task == 1:
         delay = K
@@ -258,17 +316,11 @@ def update_R(C, eta, v, K, M, H, task, idx=None):
             for k in range(K):
                 sum2 += H[i] * I3_val_numba(C, i, K + n, k) * H[k]
             ng[i, n] = sum1 - sum2
-    
-    if idx is not None :
-        for i in range(len(idx)):
-            row_idx = idx[i]
-            for n in range(M):
-                ng[row_idx, n] = 0.0
                 
     return eta * ng
 
 @njit
-def update_Q(C, eta, v, K, M, H, task, idx=None):
+def update_Q(C, eta, v, K, M, H, task):
     ng1 = np.zeros((K, K))
     ng2 = np.zeros((K, K))
     ng3 = np.zeros((K, K))
@@ -285,7 +337,6 @@ def update_Q(C, eta, v, K, M, H, task, idx=None):
             for j in range(K):
                 sum2 += H[i] * H[j] * I3_val_numba(C, i, k, j)
             ng1[i, k] = sum1 - sum2
-            
             sum3 = 0.0
             for m in range(M):
                 sum3 += H[k] * v[m] * I3_val_numba(C, k, i, delay + m)
@@ -293,7 +344,6 @@ def update_Q(C, eta, v, K, M, H, task, idx=None):
             for j in range(K):
                 sum4 += H[k] * H[j] * I3_val_numba(C, k, i, j)
             ng2[i, k] = sum3 - sum4
-            
             sum5 = 0.0
             for j in range(K):
                 for l in range(K):
@@ -307,19 +357,6 @@ def update_Q(C, eta, v, K, M, H, task, idx=None):
                 for m in range(M):
                     sum7 += H[j] * v[m] * I4_val_numba(C, i, k, j, delay + m)
             ng3[i, k] = H[k] * H[i] * (sum5 + sum6 - 2.0 * sum7)
-    
-    if idx is not None :
-        for i in range(len(idx)):
-            row_idx = idx[i]
-            for k in range(K):
-                ng1[row_idx, k] = 0.0
-                ng2[row_idx, k] = 0.0
-                ng3[row_idx, k] = 0.0
-                #Symmetry in Q 
-                ng1[k, row_idx] = 0.0
-                ng2[k, row_idx] = 0.0
-                ng3[k, row_idx] = 0.0
-                
                 
     return eta * (ng1 + ng2) + (eta * eta) * ng3
 
@@ -366,160 +403,115 @@ def update_H(C, h, eta, v, K, M,task):
     return eta * ng
 
 @njit
-def update_Hb(C, h, eta, v, K, M, ):
+def update_h2(C, h, eta, v, K, M, ):
     ng = np.zeros((K,))
-    for j in range(K):
+    for k in range(K):
         sum1 = 0.0
-        for m in range(M):
-            sum1 += v[m] * I2_val_numba(C, 2 * K + m, K + j)
+        for p in range(M):
+            sum1 += v[p] * I2_val_numba(C, 2*K + p, K + k)
         sum2 = 0.0
-        for i in range(K):
-            sum2 += h[i] * I2_val_numba(C, K + i, K + j)
-        ng[j] = sum1 - sum2
+        for l in range(K):
+            sum2 += h[l] * I2_val_numba(C, K + l, K + k)
+        ng[k] = sum1 - sum2
     return eta * ng
 
 @njit
-def update_B(C, h, eta, v, K, M, L, gamma):
+def update_B(C, h, eta, v, K, M, L, lr_LoRA):
     ng = np.zeros((K, L))
-    for j in range(K):
-        for s in range(L):
+    for k in range(K):
+        for i in range(L):
             sum1 = 0.0
-            for i in range(K):
-                sum1 += h[j] * h[i] * I3_val_numba(C, K + j, 2 * K + M + s, K + i)
+            for l in range(K):
+                sum1 += h[k] * h[l] * I3_val_numba(C, K + k, 2*K+M + i, K + l)
             sum2 = 0.0
             for m in range(M):
-                sum2 += h[j] * v[m] * I3_val_numba(C, K + j, 2 * K + M + s, 2 * K + m)
-            ng[j, s] = gamma * eta * (sum2 - sum1)
+                sum2 += h[k] * v[m] * I3_val_numba(C, K + k, 2*K+M + i, 2*K + m)
+            ng[k, i] = lr_LoRA * eta * (sum2 - sum1)
     return ng
 
 @njit
-def update_Gamma(C, h, eta, v, K, M, L, B, gamma):
+def update_Gamma(C, h, eta, v, K, M, L, B, lr_LoRA):
     ng = np.zeros((M, L))
-    for m in range(M):
-        for s in range(L):
+    for p in range(M):
+        for i in range(L):
             sum1 = 0.0
-            for i in range(K):
+            for k in range(K):
                 for l in range(K):
-                    sum1 += h[i] * h[l] * B[i, s] * I3_val_numba(C, K + i, 2 * K + m, K + l)
+                    sum1 += h[k] * h[l] * B[k, i] * I3_val_numba(C, K + k, 2*K + p, K + l)
             sum2 = 0.0
-            for i in range(K):
-                for n in range(M):
-                    sum2 += h[i] * v[n] * B[i, s] * I3_val_numba(C, K + i, 2 * K + m, 2 * K + n)
-            ng[m, s] = sum2 - sum1
-    return eta * gamma * ng
+            for k in range(K):
+                for q in range(M):
+                    sum2 += h[k] * v[q] * B[k, i] * I3_val_numba(C, K + k, 2*K + p, 2*K + q)
+            ng[p, i] = sum2 - sum1
+    return eta * lr_LoRA * ng
 
 @njit
-def update_Lambda(C, h, eta, v, K, M, L, B, gamma):
+def update_Lambda(C, h, eta, v, K, M, L, B, lr_LoRA):
     ng = np.zeros((M, L))
     for m in range(M):
-        for s in range(L):
+        for i in range(L):
             sum1 = 0.0
-            for i in range(K):
+            for k in range(K):
                 for l in range(K):
-                    sum1 += h[i] * h[l] * B[i, s] * I3_val_numba(C, i, K + m, l)
+                    sum1 += h[k] * h[l] * B[k, i] * I3_val_numba(C, K + k, 2*K+M+L + m, K + l)
             sum2 = 0.0
-            for i in range(K):
-                for n in range(M):
-                    sum2 += h[i] * v[n] * B[i, s] * I3_val_numba(C, i, K + m, K + M + n)
-            ng[m, s] = sum2 - sum1
-    return eta * gamma * ng
+            for k in range(K):
+                for p in range(M):
+                    sum2 += h[k] * v[p] * B[k, i] * I3_val_numba(C, K + k, 2*K+M+L + m, 2*K + p)
+            ng[m, i] = sum2 - sum1
+    return eta * lr_LoRA * ng
 
 @njit
-def update_Xi(C, h, eta, v, K, M, L, B, gamma):
+def update_Xi(C, h, eta, v, K, M, L, B, lr_LoRA):
     ng = np.zeros((K, L))
-    for j in range(K):
-        for s in range(L):
+    for k in range(K):
+        for i in range(L):
             sum1 = 0.0
-            for i in range(K):
-                for l in range(K):
-                    sum1 += h[i] * h[l] * B[i, s] * I3_val_numba(C, K + i, j, K + l)
+            for l in range(K):
+                for kprime in range(K):
+                    sum1 += h[l] * h[kprime] * B[l, i] * I3_val_numba(C, K + l, k, K + kprime)
             sum2 = 0.0
-            for i in range(K):
-                for m in range(M):
-                    sum2 += h[i] * v[m] * B[i, s] * I3_val_numba(C, K + i, j, 2 * K + m)
-            ng[j, s] = sum2 - sum1
-    return eta * gamma * ng
+            for l in range(K):
+                for p in range(M):
+                    sum2 += h[l] * v[p] * B[l, i] * I3_val_numba(C, K + l, k, 2*K + p)
+            ng[k, i] = sum2 - sum1
+    return eta * lr_LoRA * ng
 
 @njit
-def update_Phi(C, h, eta, v, K, M, L, B, gamma):
+def update_Phi(C, h, eta, v, K, M, L, B, lr_LoRA):
     ng = np.zeros((L, L))
-    for s in range(L):
-        for t in range(s, L):
+    for j in range(L):
+        for i in range(j, L):
             sum1 = 0.0
             sum2 = 0.0
             sum3 = 0.0
             sum4 = 0.0
-            for i in range(K):
-                idx_i = K + i
-                for m in range(M):
-                    idx_t = 2 * K + M + t
-                    idx_m = 2 * K + m
-                    sum1 += h[i] * v[m] * B[i, s] * I3_val_numba(C, idx_i, idx_t, idx_m)
-            for i in range(K):
-                idx_i = K + i
-                for k in range(K):
-                    idx_t = 2 * K + M + t
-                    idx_k = K + k
-                    sum2 += h[i] * h[k] * B[i, s] * I3_val_numba(C, idx_i, idx_t, idx_k)
-            for i in range(K):
-                idx_i = K + i
-                for m in range(M):
-                    idx_s = 2 * K + M + s
-                    idx_m = 2 * K + m
-                    sum3 += h[i] * v[m] * B[i, t] * I3_val_numba(C, idx_i, idx_s, idx_m)
-            for i in range(K):
-                idx_i = K + i
-                for k in range(K):
-                    idx_s = 2 * K + M + s
-                    idx_k = K + k
-                    sum4 += h[i] * h[k] * B[i, t] * I3_val_numba(C, idx_i, idx_s, idx_k)
+            for k in range(K):
+                for p in range(M):
+                    sum1 += h[k] * v[p] * B[k, i] * I3_val_numba(C, K + k, 2*K+M + j, 2*K + p)
+                for l in range(K):
+                    sum2 += h[k] * h[l] * B[k, i] * I3_val_numba(C, K + k, 2*K+M + j, K + l)
+            for k in range(K):
+                for p in range(M):
+                    sum3 += h[k] * v[p] * B[k, j] * I3_val_numba(C, K + k, 2*K+M + i, 2*K + p)
+                for l in range(K):
+                    sum4 += h[k] * h[l] * B[k, j] * I3_val_numba(C, K + k, 2*K+M + i, K + l)
             sum5 = 0.0
             sum6 = 0.0
             sum7 = 0.0
-            for i in range(K):
-                idx_i = K + i
-                for j in range(K):
-                    idx_j = K + j
-                    for k in range(K):
-                        idx_k = K + k
-                        for l in range(K):
-                            idx_l = K + l
-                            sum5 += h[i] * h[j] * h[k] * h[l] * B[i, t] * B[j, s] * I4_val_numba(C, idx_i, idx_j, idx_k, idx_l)
-            for i in range(K):
-                idx_i = K + i
-                for j in range(K):
-                    idx_j = K + j
-                    for l in range(K):
-                        idx_l = K + l
-                        for m in range(M):
-                            idx_m = 2 * K + m
-                            sum6 += h[i] * h[j] * h[l] * v[m] * B[i, t] * B[j, s] * I4_val_numba(C, idx_i, idx_j, idx_l, idx_m)
-            for i in range(K):
-                idx_i = K + i
-                for j in range(K):
-                    idx_j = K + j
-                    for m in range(M):
-                        idx_m = 2 * K + m
-                        for n in range(M):
-                            idx_n = 2 * K + n
-                            sum7 += h[i] * h[j] * v[n] * v[m] * B[i, t] * B[j, s] * I4_val_numba(C, idx_i, idx_j, idx_m, idx_n)
-            ng[t, s] = eta * gamma * (sum1 - sum2 + sum3 - sum4) + (eta * eta) * (gamma * gamma) * (sum5 - 2.0 * sum6 + sum7)
-            ng[s, t] = ng[t, s]
+            for k in range(K):
+                for l in range(K):
+                    for kprime in range(K):
+                        for lprime in range(K):
+                            sum5 += h[k] * h[l] * h[kprime] * h[lprime] * B[k, i] * B[l, j] * I4_val_numba(C, K + k, K + l, K + kprime, K + lprime)
+                        for p in range(M):
+                            sum6 += h[k] * h[l] * h[kprime] * v[p] * B[k, i] * B[l, j] * I4_val_numba(C, K + k, K + l, K + kprime, 2*K + p)
+                    for p in range(M):
+                        for q in range(M):
+                            sum7 += h[k] * h[l] * v[p] * v[q] * B[k, i] * B[l, j] * I4_val_numba(C, K + k, K + l, 2*K + p, 2*K + q)
+            ng[i, j] = eta * lr_LoRA * (sum1 - sum2 + sum3 - sum4) + (eta**2) * (lr_LoRA**2) * (sum5 - 2.0 * sum6 + sum7)
+            ng[j, i] = ng[i, j]
     return ng
-
-@njit
-def compute_loss_LoRA(C, Hb, v_b, K, M):
-    loss = 0.0
-    for i in range(K):
-        for j in range(K):
-            loss += Hb[i] * Hb[j] * I2_val_numba(C, K + i, K + j)
-    for m in range(M):
-        for n in range(M):
-            loss += v_b[m] * v_b[n] * I2_val_numba(C, 2 * K + m, 2 * K + n)
-    for i in range(K):
-        for m in range(M):
-            loss -= 2.0 * Hb[i] * v_b[m] * I2_val_numba(C, K + i, 2 * K + m)
-    return loss / 2.0
 
 @njit
 def compute_loss_standard(C, H, v, K, M,task=1):
@@ -537,4 +529,22 @@ def compute_loss_standard(C, H, v, K, M,task=1):
     for i in range(K):
         for m in range(M):
             loss -= 2.0 * H[i] * v[m] * I2_val_numba(C, i, delay + m)
+    return loss / 2.0
+
+@njit
+def compute_loss_LoRA(C, h2, v_T2, K, M, L, task=1):
+    loss = 0.0
+    if task== 1:
+        delay= 2*K + M + L
+    else:
+        delay = 2*K
+    for k in range(K):
+        for l in range(K):
+            loss += h2[k] * h2[l] * I2_val_numba(C, K + k, K + l)
+    for p in range(M):
+        for q in range(M):
+            loss += v_T2[p] * v_T2[q] * I2_val_numba(C, delay + p, delay + q)
+    for k in range(K):
+        for p in range(M):
+            loss -= 2.0 * h2[k] * v_T2[p] * I2_val_numba(C, delay + p, K + k)
     return loss / 2.0

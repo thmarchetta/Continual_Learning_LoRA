@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import tempfile
 class ExperimentLogger:
 
     def __init__(self, metadata=None):
@@ -54,20 +55,40 @@ class ExperimentLogger:
 
         return {"metadata": self.metadata, "logs": logs}
     
+    #@staticmethod
+    #def append_to_file(path, logger):
+#
+    #    run = logger.to_dict()
+#
+    #    if os.path.exists(path):
+    #        data = np.load(path, allow_pickle=True).item()
+    #        runs = data.get("runs", [])
+    #    else:
+    #        runs = []
+#
+    #    runs.append(run)
+#
+    #    np.save(path, {"runs": runs}, allow_pickle=True)
+        
+    #Atomic save to not create bugs when ctrl+C during saving
     @staticmethod
     def append_to_file(path, logger):
-
         run = logger.to_dict()
-
-        if os.path.exists(path):
+    
+        try:
             data = np.load(path, allow_pickle=True).item()
             runs = data.get("runs", [])
-        else:
+        except (FileNotFoundError, EOFError):
             runs = []
-
+    
         runs.append(run)
-
-        np.save(path, {"runs": runs}, allow_pickle=True)
+    
+        directory = os.path.dirname(path) or "."
+        with tempfile.NamedTemporaryFile(delete=False, dir=directory, suffix=".npy") as tmp:
+            tmp_path = tmp.name
+    
+        np.save(tmp_path, {"runs": runs}, allow_pickle=True)
+        os.replace(tmp_path, path)
 
 
     @staticmethod

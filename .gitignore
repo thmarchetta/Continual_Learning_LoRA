@@ -6,4 +6,5 @@ old_files/
 *.txt
 *.png
 __pycache__/
-new_code_continual_learning.ipynb
+data/
+*.ipynb
