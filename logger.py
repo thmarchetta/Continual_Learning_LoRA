@@ -54,21 +54,6 @@ class ExperimentLogger:
             }
 
         return {"metadata": self.metadata, "logs": logs}
-    
-    #@staticmethod
-    #def append_to_file(path, logger):
-#
-    #    run = logger.to_dict()
-#
-    #    if os.path.exists(path):
-    #        data = np.load(path, allow_pickle=True).item()
-    #        runs = data.get("runs", [])
-    #    else:
-    #        runs = []
-#
-    #    runs.append(run)
-#
-    #    np.save(path, {"runs": runs}, allow_pickle=True)
         
     #Atomic save to not create bugs when ctrl+C during saving
     @staticmethod

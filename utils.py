@@ -72,7 +72,7 @@ def get_OP_init(stud,data,args):
     v_T2  = data.teacher_2.fc2.weight.detach().numpy().copy()
     B0   = stud.B.weight.detach().numpy().copy()
     
-    #Q0 = 0.001* np.identity(args.K)
+    #Q0 = 0.0001* np.identity(args.K)
     #T0 = np.identity(args.M)
     #S0 = np.identity(args.M)
     #V0 = args.rho * np.identity(args.M)
@@ -115,7 +115,7 @@ def get_metadata(args):
 
     if args.method not in VALID_METHODS:
         raise ValueError(f"Method '{args.method}' is not implemented or has a bad spelling. "
-                     f"Valid options are: {', '.join(VALID_METHODS)}")
+                         f"Valid options are: {', '.join(VALID_METHODS)}")
     if args.rows_to_freeze > args.L :
         print(f"WARNING : Rows to freeze must be smaller than L. Currently : L={args.L}, TO FREEZE : {args.rows_to_freeze}. \n If needed, set TO FREEZE to {args.L}")
         args.rows_to_freeze = args.L
