@@ -1,5 +1,3 @@
-#TODO : WHy is gamma not used in training ?
-
 import utils
 import training
 import ODEs_theory
@@ -10,15 +8,15 @@ import numpy as np
 argfile = "/home/theom/continual_learning/parameters.json"
 args = utils.loadJson(argfile)
 
-#rhos = np.arange(0,1.01, 0.025) #For theory
+rhos = np.arange(0,1.01, 0.025) #For theory
 #rhos = np.arange(0,1.01, 0.1)
 #rhos = np.arange(0,1.01, 0.2) #For training
-seeds = np.rint(np.linspace(1001, 10000, 10)).astype(int)
+#seeds = np.rint(np.linspace(1001, 10000, 10)).astype(int)
 #Ls = np.arange(1,11,1)
 
 Ls = [args.L]
 rhos = [args.rho]
-#seeds = [args.seed]
+seeds = [args.seed]
 for seed in seeds:
     for L in Ls:
         for rho in rhos:
@@ -40,17 +38,7 @@ for seed in seeds:
             logs_ODES = logger.ExperimentLogger(metadata)
             logs_training = logger.ExperimentLogger(metadata)
             utils.set_seed(args.seed)
-            if args.dataset == "synthetic" :
-                data = networks.Data_and_Teachers(args)
-            elif args.dataset == "MNIST" :
-                data = networks.ContinualMnist(args)
-            elif args.dataset == "fMNIST" :
-                data = networks.ContinualFashionMNIST(args)
-            elif args.dataset == "CIFAR":
-                data = networks.ContinualCifar(args)
-            else:
-                raise ValueError("Not good dataset !")
-                
+            data = networks.get_datas(args)
             t1, t2 = data.get_Teachers()
                 
             stud = networks.Student(args)

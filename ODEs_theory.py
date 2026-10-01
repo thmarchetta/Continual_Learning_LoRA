@@ -39,7 +39,7 @@ def initialize_B_freeze_K_minus_L(Ha, C, v_T1, args):
     remaining = np.setdiff1d(np.arange(args.K), idx)
     if len(remaining) > 0:
         B[remaining, np.arange(len(remaining)) % args.L] = 1.0
-
+    print("B after procedure for standard+SDGM:", B)
     return B, idx
 
 def initialize_B_freeze_L(Ha, C, v_T1, args):
@@ -103,8 +103,6 @@ def initialize_B_freeze_L(Ha, C, v_T1, args):
 
     # idx = active/plastic rows
     B[idx, np.arange(num_active) % args.L] = 1.0
-    print("Ha abs", HA_abs)
-    print("B", B)
     return B, idx
 
 def solve_ODES(args, OP_init, logs_ODES):

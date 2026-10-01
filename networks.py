@@ -144,7 +144,7 @@ class Student(nn.Module):
                 self.head_1.weight.zero_()
                 self.head_2.weight.zero_()
                 self.head_1.weight[:, :half_k] = 0.01
-                self.head_2.weight[:,:half_k] = 1
+                self.head_2.weight[:,:half_k] = -1
         
         else:
             with torch.no_grad():        
@@ -237,7 +237,7 @@ class Data_and_Teachers():
             self.teacher_2.fc2.weight.data = graded_weights
         elif self.teacher_initialization == "committee":
             self.teacher_1.fc2.weight.data = 1 + 0.01*torch.randn((self.M,))
-            self.teacher_2.fc2.weight.data = 1 + 0.01*torch.randn((self.M,))
+            self.teacher_2.fc2.weight.data = -1 + 0.01*torch.randn((self.M,))
         else:
             raise ValueError(f"Unsupported teacher initialization: {self.teacher_initialization}")
 
@@ -697,3 +697,16 @@ class ContinualFashionMNIST:
                     break
 
         return total_loss / n
+    
+def get_datas(args):
+    if args.dataset == "synthetic" :
+        data = Data_and_Teachers(args)
+    elif args.dataset == "MNIST" :
+        data = ContinualMnist(args)
+    elif args.dataset == "fMNIST" :
+        data = ContinualFashionMNIST(args)
+    elif args.dataset == "CIFAR":
+        data = ContinualCifar(args)
+    else:
+        raise ValueError("Not good dataset !")
+    return data

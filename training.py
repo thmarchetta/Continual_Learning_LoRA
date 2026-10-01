@@ -131,7 +131,6 @@ def training(args, data, stud, logs_training, t1, t2):
       P=12000
       args.P_test = 2000
     
-    gamma = args.gamma/sqrt(args.L)
     if args.dataset == "synthetic":
       t1.to(args.device)
       t2.to(args.device)
